@@ -1,8 +1,11 @@
 export default async function handler(req, res) {
   try {
-    const path = req.query.path || '';
-    const rest = req.url.replace('/api/kobo', '').replace('?path=', '');
-    const url = 'https://kf.kobotoolbox.org' + (path || rest);
+    const path = req.query.path;
+    if (!path) {
+      res.status(400).json({ error: 'No path provided' });
+      return;
+    }
+    const url = 'https://kf.kobotoolbox.org' + path;
     const r = await fetch(url, {
       headers: {
         'Authorization': 'Token cfda7c6ec2ad5c686e180747c4c005995710445a',
