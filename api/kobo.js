@@ -9,8 +9,8 @@ export default async function handler(req, res) {
     const koboPath = req.query.path;
     if (!koboPath) return res.status(400).json({ error: 'No path provided' });
 
-    const url = 'https://kf.kobotoolbox.org' + koboPath;
-    console.log('Fetching:', url);
+    const cleanPath = koboPath.startsWith('/') ? koboPath : '/' + koboPath;
+    const url = 'https://kf.kobotoolbox.org' + cleanPath;
 
     const r = await fetch(url, {
       headers: {
