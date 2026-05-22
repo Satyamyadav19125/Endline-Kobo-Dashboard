@@ -242,17 +242,17 @@ export default function App() {
   const fetchData=useCallback(async()=>{
     setLoading(true);setError(null);
     try {
-      const metaR=await fetch(`/api/kobo?path=/api/v2/assets/${FORM_UID}/?format=json`,{headers:HEADERS});
+      const metaR=await fetch(`/api/kobo?path=${encodeURIComponent(`/api/v2/assets/${FORM_UID}/?format=json`)}`,{headers:HEADERS});
       if(!metaR.ok)throw new Error(`Meta HTTP ${metaR.status}`);
       const meta=await metaR.json();
       const choices=(meta?.content?.choices)||[];
       setFormChoices(choices.filter(c=>String(c.name||"").match(/PLT_\d+/)));
 
-      let all=[],url=`/api/kobo?path=/api/v2/assets/${FORM_UID}/data/?format=json&limit=100&start=0`;
+      let all=[],url=`/api/kobo?path=${encodeURIComponent(`/api/v2/assets/${FORM_UID}/data/?format=json&limit=100&start=0`)}`;
       while(url){
         const r=await fetch(url,{headers:HEADERS});if(!r.ok)throw new Error(`Data HTTP ${r.status}`);
         const j=await r.json();all=[...all,...(j.results||[])];
-        url=j.next?j.next.replace("https://kf.kobotoolbox.org",""):null;
+        url=j.next?`/api/kobo?path=${encodeURIComponent(j.next.replace("https://kf.kobotoolbox.org",""))}`:null;
       }
       setSubmissions(all);
       if(all.length&&!visibleCols)
