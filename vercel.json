@@ -1,6 +1,5 @@
 {
   "rewrites": [
-    { "source": "/api/kobo", "destination": "/api/kobo" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }
