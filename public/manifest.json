@@ -1,0 +1,19 @@
+{
+  "name": "KoboToolbox Field Survey Dashboard",
+  "short_name": "KoboDash",
+  "description": "Live field survey dashboard with maps, analytics & data quality flags",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f1f5f9",
+  "theme_color": "#0ea5e9",
+  "orientation": "any",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
