@@ -9,16 +9,18 @@ const COLORS = ["#0ea5e9","#ef4444","#f59e0b","#10b981","#8b5cf6","#f97316","#ec
 const SAT_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 const STR_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
 
-// ─── RED FLAG RULES ────────────────────────────────────────────────────
+// ─── UPDATED RED FLAG RULES ────────────────────────────────────────────
 const RED_FLAG_RULES = [
   { match: /total_acres/i, label: "Total Acres", max: 30, min: null },
-  { match: /bigha/i, label: "Bigha/Acre", min: 3, max: 10 },
-  { match: /wheat_irrigations|total_irrigation/i, label: "Irrigations", min: 3, max: 6 },
-  { match: /irrigation.*hour|hours.*irrig/i, label: "Irrigation Hrs", min: 3, max: 8 },
-  { match: /wheat_yield_per_acre|yield_per_acre/i, label: "Yield/Acre", min: 15, max: 30 },
-  { match: /dap_kg_per_acre|dap.*per.*acre/i, label: "DAP kg/Acre", min: 35, max: 70 },
+  { match: /yield_per_acre/i, label: "Yield/Acre (qtl)", min: 15, max: 27 },
+  { match: /bigha/i, label: "Bigha/Acre", min: 4.45, max: 6.25 },
+  { match: /keara|kera/i, label: "Keara", min: 2, max: 7 },
+  { match: /wheat_irrigations|total_irrigation/i, label: "Irrigations/Season", min: 2, max: 6 },
+  { match: /irrigation.*day|days.*irrigation|days_per/i, label: "Days/Irrigation", min: 5, max: 8 },
+  { match: /irrigation.*hour|hours.*irrig/i, label: "Irrigation Hrs/Day", min: 18, max: 26 },
+  { match: /dap_kg_per_acre|dap.*per.*acre/i, label: "DAP kg/Acre", min: 40, max: 70 },
   { match: /urea.*bag|bags.*urea|urea_total_bags/i, label: "Urea Bags", min: 2, max: 4 },
-  { match: /urea.*kg.*bag|kg_per_bag|urea_bag_kg/i, label: "Urea kg/Bag", min: 50, max: 200 },
+  { match: /urea.*kg.*bag|kg_per_bag|urea_bag_kg|bag.*size|bag.*weight/i, label: "Urea Bag Size (kg)", min: 45, max: 50 },
 ];
 
 function getFlags(sub) {
@@ -39,24 +41,16 @@ function getFlags(sub) {
   return flags;
 }
 
-// ─── localStorage helpers for manual flags ─────────────────────────────
-function loadLS(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch { return fallback; } }
+function loadLS(key, fb) { try { return JSON.parse(localStorage.getItem(key)) || fb; } catch { return fb; } }
 function saveLS(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} }
 
-// ─── SUB COMPONENTS ────────────────────────────────────────────────────
-function HBar({data,xKey,yKey,color="#0ea5e9",theme,maxItems=20}){if(!data?.length)return null;const rows=data.slice(0,maxItems);const max=Math.max(...rows.map(d=>num(d[yKey])),1);const tc=theme==="light"?"#374151":"#e2e8f0";const bg=theme==="light"?"#e5e7eb":"#1e293b";const labelW=Math.min(Math.max(Math.max(...rows.map(d=>String(d[xKey]).length))*7+8,100),180);return(<div style={{display:"flex",flexDirection:"column",gap:6}}>{rows.map((d,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:10}}><span style={{width:labelW,fontSize:12,color:tc,flexShrink:0,textAlign:"right",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={String(d[xKey])}>{d[xKey]}</span><div style={{flex:1,background:bg,borderRadius:4,height:26,overflow:"hidden",position:"relative",minWidth:60}}><div style={{width:`${(num(d[yKey])/max)*100}%`,height:"100%",background:typeof color==="function"?color(i):color,borderRadius:4,transition:"width .5s"}}/><span style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",fontSize:12,fontWeight:700,color:theme==="light"?"#1e293b":"#f1f5f9",textShadow:theme==="light"?"0 0 3px #fff":"0 0 4px #000"}}>{typeof d[yKey]==="number"?fmt(d[yKey],1):d[yKey]}</span></div></div>))}</div>);}
-
+function HBar({data,xKey,yKey,color="#0ea5e9",theme,maxItems=20}){if(!data?.length)return null;const rows=data.slice(0,maxItems);const max=Math.max(...rows.map(d=>num(d[yKey])),1);const tc=theme==="light"?"#374151":"#e2e8f0";const bg=theme==="light"?"#e5e7eb":"#1e293b";const lw=Math.min(Math.max(Math.max(...rows.map(d=>String(d[xKey]).length))*7+8,100),180);return(<div style={{display:"flex",flexDirection:"column",gap:6}}>{rows.map((d,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:10}}><span style={{width:lw,fontSize:12,color:tc,flexShrink:0,textAlign:"right",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={String(d[xKey])}>{d[xKey]}</span><div style={{flex:1,background:bg,borderRadius:4,height:26,overflow:"hidden",position:"relative",minWidth:60}}><div style={{width:`${(num(d[yKey])/max)*100}%`,height:"100%",background:typeof color==="function"?color(i):color,borderRadius:4,transition:"width .5s"}}/><span style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",fontSize:12,fontWeight:700,color:theme==="light"?"#1e293b":"#f1f5f9",textShadow:theme==="light"?"0 0 3px #fff":"0 0 4px #000"}}>{typeof d[yKey]==="number"?fmt(d[yKey],1):d[yKey]}</span></div></div>))}</div>);}
 function PieC({data,size=150}){if(!data?.length)return null;const total=data.reduce((s,d)=>s+d.value,0);if(!total)return null;let angle=-Math.PI/2;const r=size/2-6,cx=size/2,cy=size/2;const sl=data.map((d,i)=>{const sw=(d.value/total)*2*Math.PI;const x1=cx+r*Math.cos(angle),y1=cy+r*Math.sin(angle);angle+=sw;const x2=cx+r*Math.cos(angle),y2=cy+r*Math.sin(angle);return{path:`M${cx},${cy} L${x1},${y1} A${r},${r} 0 ${sw>Math.PI?1:0},1 ${x2},${y2} Z`,color:COLORS[i%COLORS.length],label:d.label,value:d.value};});return(<div style={{display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}}><svg width={size} height={size} style={{flexShrink:0}}>{sl.map((s,i)=><path key={i} d={s.path} fill={s.color} opacity="0.9"/>)}</svg><div style={{display:"flex",flexDirection:"column",gap:5,flex:1,minWidth:110}}>{sl.map((s,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:6,fontSize:12}}><div style={{width:10,height:10,borderRadius:2,background:s.color,flexShrink:0}}/><span>{s.label}: <b>{s.value}</b></span></div>))}</div></div>);}
-
-function MapView({submissions,selectedId,onSelect,mapLayer,isVisible}){const ref=useRef(null),mapRef=useRef(null),markersRef=useRef([]),tileRef=useRef(null);useEffect(()=>{if(!ref.current||mapRef.current)return;const L=window.L;if(!L)return;mapRef.current=L.map(ref.current,{zoomControl:true,tap:true}).setView([30.38,76.38],11);tileRef.current=L.tileLayer(SAT_URL,{attribution:"© Esri",maxZoom:19}).addTo(mapRef.current);setTimeout(()=>{if(mapRef.current)mapRef.current.invalidateSize();},300);},[]);useEffect(()=>{if(isVisible&&mapRef.current)setTimeout(()=>mapRef.current.invalidateSize(),200);},[isVisible]);useEffect(()=>{const L=window.L;if(!L||!mapRef.current||!tileRef.current)return;tileRef.current.remove();tileRef.current=L.tileLayer(mapLayer==='satellite'?SAT_URL:STR_URL,{attribution:mapLayer==='satellite'?'© Esri':'© OSM',maxZoom:19}).addTo(mapRef.current);},[mapLayer]);useEffect(()=>{const L=window.L;if(!L||!mapRef.current)return;markersRef.current.forEach(m=>m.remove());markersRef.current=[];submissions.filter(s=>s._geolocation?.length===2&&s._geolocation[0]).forEach(s=>{const[lat,lng]=s._geolocation,isSel=s._id===selectedId;const fl=getFlags(s);const dotColor=isSel?"#f59e0b":fl.length>0?"#ef4444":"#0ea5e9";const icon=L.divIcon({className:"",html:`<div style="width:${isSel?20:12}px;height:${isSel?20:12}px;border-radius:50%;background:${dotColor};border:2px solid #fff;box-shadow:0 2px 8px #0006"></div>`,iconSize:[isSel?20:12,isSel?20:12],iconAnchor:[isSel?10:6,isSel?10:6]});const m=L.marker([lat,lng],{icon}).addTo(mapRef.current);m.on("click",()=>onSelect(s._id===selectedId?null:s._id));markersRef.current.push(m);});if(selectedId){const sel=submissions.find(s=>s._id===selectedId);if(sel?._geolocation)mapRef.current.flyTo(sel._geolocation,14,{duration:1});}},[submissions,selectedId]);return<div ref={ref} style={{height:"100%",width:"100%",minHeight:300}}/>;}
-
+function MapView({submissions,selectedId,onSelect,mapLayer,isVisible}){const ref=useRef(null),mapRef=useRef(null),markersRef=useRef([]),tileRef=useRef(null);useEffect(()=>{if(!ref.current||mapRef.current)return;const L=window.L;if(!L)return;mapRef.current=L.map(ref.current,{zoomControl:true,tap:true}).setView([30.38,76.38],11);tileRef.current=L.tileLayer(SAT_URL,{attribution:"© Esri",maxZoom:19}).addTo(mapRef.current);setTimeout(()=>{if(mapRef.current)mapRef.current.invalidateSize();},300);},[]);useEffect(()=>{if(isVisible&&mapRef.current)setTimeout(()=>mapRef.current.invalidateSize(),200);},[isVisible]);useEffect(()=>{const L=window.L;if(!L||!mapRef.current||!tileRef.current)return;tileRef.current.remove();tileRef.current=L.tileLayer(mapLayer==='satellite'?SAT_URL:STR_URL,{attribution:mapLayer==='satellite'?'© Esri':'© OSM',maxZoom:19}).addTo(mapRef.current);},[mapLayer]);useEffect(()=>{const L=window.L;if(!L||!mapRef.current)return;markersRef.current.forEach(m=>m.remove());markersRef.current=[];submissions.filter(s=>s._geolocation?.length===2&&s._geolocation[0]).forEach(s=>{const[lat,lng]=s._geolocation,isSel=s._id===selectedId;const fl=getFlags(s);const dc=isSel?"#f59e0b":fl.length>0?"#ef4444":"#0ea5e9";const icon=L.divIcon({className:"",html:`<div style="width:${isSel?20:12}px;height:${isSel?20:12}px;border-radius:50%;background:${dc};border:2px solid #fff;box-shadow:0 2px 8px #0006"></div>`,iconSize:[isSel?20:12,isSel?20:12],iconAnchor:[isSel?10:6,isSel?10:6]});const m=L.marker([lat,lng],{icon}).addTo(mapRef.current);m.on("click",()=>onSelect(s._id===selectedId?null:s._id));markersRef.current.push(m);});if(selectedId){const sel=submissions.find(s=>s._id===selectedId);if(sel?._geolocation)mapRef.current.flyTo(sel._geolocation,14,{duration:1});}},[submissions,selectedId]);return<div ref={ref} style={{height:"100%",width:"100%",minHeight:300}}/>;}
 function DlBtn({rows,filename="data",theme}){const[open,setOpen]=useState(false);const ref=useRef(null);useEffect(()=>{const fn=e=>{if(ref.current&&!ref.current.contains(e.target))setOpen(false);};document.addEventListener("mousedown",fn);return()=>document.removeEventListener("mousedown",fn);},[]);const dlCSV=()=>{if(!rows.length)return;const k=Object.keys(rows[0]);const csv=[k.join(","),...rows.map(r=>k.map(c=>`"${String(r[c]??"").replace(/"/g,'""')}"`).join(","))].join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download=filename+".csv";a.click();setOpen(false);};const dlXLSX=()=>{const X=window.XLSX;if(!X)return;const ws=X.utils.json_to_sheet(rows);const wb=X.utils.book_new();X.utils.book_append_sheet(wb,ws,"Data");X.writeFile(wb,filename+".xlsx");setOpen(false);};const bg=theme==="light"?"#fff":"#0f172a",bd=theme==="light"?"#e2e8f0":"#1e293b",tc=theme==="light"?"#1e293b":"#e2e8f0";return(<div ref={ref} style={{position:"relative"}}><button onClick={()=>setOpen(o=>!o)} style={{background:theme==="light"?"#eff6ff":"#0f172a",border:"1px solid #0ea5e944",color:"#0ea5e9",padding:"5px 10px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:600}}>⬇ {rows.length}</button>{open&&<div style={{position:"absolute",right:0,top:"calc(100% + 4px)",background:bg,border:`1px solid ${bd}`,borderRadius:8,boxShadow:"0 4px 20px #0004",zIndex:999,minWidth:120}}>{[{l:"CSV",fn:dlCSV},{l:"XLSX",fn:dlXLSX}].map(({l,fn})=><button key={l} onClick={fn} style={{width:"100%",background:"none",border:"none",padding:"8px 14px",cursor:"pointer",color:tc,fontSize:12,fontWeight:600,borderBottom:`1px solid ${bd}`,textAlign:"left"}} onMouseEnter={e=>e.currentTarget.style.background=theme==="light"?"#f0f9ff":"#0c2036"} onMouseLeave={e=>e.currentTarget.style.background="none"}>{l}</button>)}</div>}</div>);}
-
 function Stat({label,value,unit="",color,icon,theme}){const bg=theme==="light"?"#fff":"#0f172a",lc=theme==="light"?"#6b7280":"#64748b";return(<div style={{background:bg,border:`1px solid ${color}33`,borderRadius:10,padding:"12px 16px",display:"flex",flexDirection:"column",gap:4,flex:1,minWidth:110}}><span style={{fontSize:10,color:lc,letterSpacing:1,textTransform:"uppercase"}}>{icon} {label}</span><span style={{fontSize:22,fontWeight:700,color,fontFamily:"monospace"}}>{value}<span style={{fontSize:11,color:lc,marginLeft:3}}>{unit}</span></span></div>);}
-
 function Card({children,title,theme,extra,noPad}){const bg=theme==="light"?"#fff":"#0f172a",border=theme==="light"?"#e2e8f0":"#1e293b",tc=theme==="light"?"#6b7280":"#94a3b8";return(<div style={{background:bg,border:`1px solid ${border}`,borderRadius:10,padding:noPad?0:20,overflow:"hidden"}}>{(title||extra)&&<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:title?14:0,padding:noPad?"14px 18px 10px":"0",flexWrap:"wrap",gap:8}}>{title&&<h3 style={{fontSize:12,color:tc,margin:0,textTransform:"uppercase",letterSpacing:1,fontWeight:700}}>{title}</h3>}{extra}</div>}<div style={{padding:noPad?"0 18px 18px":0}}>{children}</div></div>);}
 
-// ─── MAIN APP ──────────────────────────────────────────────────────────
 export default function App() {
   const [submissions,setSubmissions]=useState([]);
   const [formChoices,setFormChoices]=useState([]);
@@ -78,7 +72,8 @@ export default function App() {
   const [showDupOnly,setShowDupOnly]=useState(false);
   const [isMobile,setIsMobile]=useState(typeof window!=="undefined"&&window.innerWidth<640);
   const [flagFilter,setFlagFilter]=useState("all");
-  // Manual flag system with localStorage persistence
+  const [flagSearch,setFlagSearch]=useState(""); // NEW: search in flags
+  const [pendingSearch,setPendingSearch]=useState(""); // NEW: search in pending
   const [dismissedFlags,setDismissedFlags]=useState(()=>loadLS("kobo_dismissed",[]));
   const [manualFlags,setManualFlags]=useState(()=>loadLS("kobo_manual_flags",{}));
   const [flagReason,setFlagReason]=useState("");
@@ -112,28 +107,39 @@ export default function App() {
 
   useEffect(()=>{fetchData();},[fetchData]);
 
-  // FIX 2: Build prefix→village map from ACTUAL submissions (not hardcoded)
+  // FIX 1: Build COMPREHENSIVE village name map from submissions AND form choices
   const prefixToVillage={};
+  // Step 1: From actual submissions (most reliable)
   submissions.forEach(r=>{
     const fid=r["ANS/ANS_farm_id"]||r["location/select_farm_id"]||"";
     const prefix=fid.split("_")[0];
     const vil=r["ANS/ANS_village"];
     if(prefix&&vil){
-      prefixToVillage[prefix]=choiceLabelMap[vil]||vil;
+      const resolved=choiceLabelMap[vil]||vil;
+      if(resolved.length>2)prefixToVillage[prefix]=resolved;
+    }
+  });
+  // Step 2: From form choices filter_value (covers unsubmitted farm IDs)
+  formChoices.forEach(c=>{
+    const prefix=(c.name||"").split("_")[0];
+    const fv=c.filter_value;
+    if(prefix&&fv&&!prefixToVillage[prefix]){
+      const resolved=choiceLabelMap[fv]||choiceLabelMap[fv.toLowerCase()]||choiceLabelMap[prefix]||choiceLabelMap[prefix.toLowerCase()]||fv;
+      if(resolved.length>1)prefixToVillage[prefix]=resolved;
     }
   });
 
-  const vilLabel=(v)=>choiceLabelMap[v]||prefixToVillage[v]||v||"-";
+  const vilLabel=(v)=>{
+    if(!v||v==="-")return "-";
+    return choiceLabelMap[v]||choiceLabelMap[v.toLowerCase()]||prefixToVillage[v]||prefixToVillage[v.toUpperCase()]||v;
+  };
 
   const total=submissions.length;
   const withGPS=submissions.filter(s=>s._geolocation?.[0]).length;
   const avgAcres=total?fmt(submissions.reduce((s,r)=>s+num(r["ANS/ANS_total_acres"]),0)/total):0;
-  const totalYield=fmt(submissions.reduce((s,r)=>s+num(r["ANS/ANS_wheat_yield_total"]),0),0);
   const avgYield=total?fmt(submissions.reduce((s,r)=>s+num(r["ANS/ANS_wheat_yield_per_acre"]),0)/total):0;
-
   const groupCount=(key)=>Object.entries(submissions.reduce((a,r)=>{const k=vilLabel(r[key]||"Unknown");a[k]=(a[k]||0)+1;return a;},{})).sort((a,b)=>b[1]-a[1]).map(([l,v])=>({label:l,value:v}));
   const groupAvg=(key,vk)=>Object.entries(submissions.reduce((a,r)=>{const k=vilLabel(r[key]||"Unknown");if(!a[k])a[k]={t:0,n:0};a[k].t+=num(r[vk]);a[k].n++;return a;},{})).map(([v,d])=>({village:v,avg:+(d.t/d.n).toFixed(1)})).sort((a,b)=>b.avg-a.avg);
-
   const villageData=groupCount("ANS/ANS_village");
   const cropMap={};submissions.forEach(r=>{(r["ANS/ANS_crops_grown"]||"Unknown").split(" ").forEach(c=>{const cl=choiceLabelMap[c]||c;cropMap[cl]=(cropMap[cl]||0)+1;});});
   const cropData=Object.entries(cropMap).sort((a,b)=>b[1]-a[1]).map(([l,v])=>({label:l,value:v}));
@@ -142,71 +148,63 @@ export default function App() {
   const strawData=Object.entries(strawMap).map(([l,v])=>({label:l,value:v}));
   const yieldByVil=groupAvg("ANS/ANS_village","ANS/ANS_wheat_yield_per_acre").slice(0,12);
   const dapByVil=groupAvg("ANS/ANS_village","ANS/ANS_dap_kg_per_acre").slice(0,12);
-
   const allCols=submissions.length?Object.keys(submissions[0]):[];
   const displayCols=visibleCols||allCols.slice(0,10);
 
   // Duplicates
   const fIdCounts={};submissions.forEach(r=>{const id=r["ANS/ANS_farm_id"]||r["location/select_farm_id"];if(id)fIdCounts[id]=(fIdCounts[id]||0)+1;});
-  const dupSet=new Set(Object.keys(fIdCounts).filter(k=>fIdCounts[k]>1));
-  const dupCount=dupSet.size;
+  const dupSet=new Set(Object.keys(fIdCounts).filter(k=>fIdCounts[k]>1));const dupCount=dupSet.size;
 
-  // Flags: auto + manual + dismissed logic
-  const flaggedSubs=submissions.map(s=>{
-    const autoFlags=getFlags(s);
-    const sid=String(s._id);
-    const isDismissed=dismissedFlags.includes(sid);
-    const manual=manualFlags[sid]||null;
-    return {...s,_autoFlags:autoFlags,_isDismissed:isDismissed,_manualFlag:manual,
-      _hasActiveFlag:(!isDismissed&&autoFlags.length>0)||!!manual};
-  });
+  // Flags
+  const flaggedSubs=submissions.map(s=>{const af=getFlags(s);const sid=String(s._id);const isDis=dismissedFlags.includes(sid);const mf=manualFlags[sid]||null;return{...s,_autoFlags:af,_isDismissed:isDis,_manualFlag:mf,_hasActiveFlag:(!isDis&&af.length>0)||!!mf};});
   const totalFlagged=flaggedSubs.filter(s=>s._hasActiveFlag).length;
   const flagTypeCounts={};flaggedSubs.forEach(s=>{if(!s._isDismissed)s._autoFlags.forEach(f=>{flagTypeCounts[f.label]=(flagTypeCounts[f.label]||0)+1;});});
   if(Object.keys(manualFlags).length>0)flagTypeCounts["Manual"]=Object.keys(manualFlags).length;
   const flagTypeData=Object.entries(flagTypeCounts).sort((a,b)=>b[1]-a[1]).map(([l,v])=>({label:l,value:v}));
 
   const mapFiltered=submissions.filter(s=>{if(!mapSearch)return true;const q=mapSearch.toLowerCase();return Object.values(s).some(v=>String(v).toLowerCase().includes(q));});
-
-  const filtered=flaggedSubs
-    .filter(r=>{
-      if(showDupOnly){const id=r["ANS/ANS_farm_id"]||r["location/select_farm_id"];if(!dupSet.has(id))return false;}
-      return !search||Object.values(r).some(v=>typeof v==="string"&&v.toLowerCase().includes(search.toLowerCase()));
-    }).sort((a,b)=>new Date(b._submission_time||0)-new Date(a._submission_time||0));
-
+  const filtered=flaggedSubs.filter(r=>{if(showDupOnly){const id=r["ANS/ANS_farm_id"]||r["location/select_farm_id"];if(!dupSet.has(id))return false;}return !search||Object.values(r).some(v=>typeof v==="string"&&v.toLowerCase().includes(search.toLowerCase()));}).sort((a,b)=>new Date(b._submission_time||0)-new Date(a._submission_time||0));
   const mapSelSub=submissions.find(s=>s._id===selectedId);
 
-  // Pending
+  // Pending - FIX 1: proper village names using prefixToVillage
   const submittedSet=new Set(submissions.map(r=>r["location/select_farm_id"]||r["ANS/ANS_farm_id"]||"").filter(Boolean));
   let allFarmIds=[];
   if(formChoices.length>0){
     allFarmIds=formChoices.map(c=>{
       const name=c.name||"";
       const prefix=name.split("_")[0];
-      // FIX 2: use prefixToVillage from actual data, then choiceLabelMap, then filter_value
-      const village=prefixToVillage[prefix]||choiceLabelMap[c.filter_value]||c.filter_value||prefix;
+      // Comprehensive village resolution chain
+      const village=prefixToVillage[prefix]||choiceLabelMap[c.filter_value]||choiceLabelMap[prefix]||choiceLabelMap[prefix.toLowerCase()]||c.filter_value||prefix;
       return {farm_id:name,village,submitted:submittedSet.has(name)};
     });
   } else {
     allFarmIds=[...submittedSet].map(id=>{
       const sub=submissions.find(r=>(r["location/select_farm_id"]||r["ANS/ANS_farm_id"])===id);
-      const vil=sub?.["ANS/ANS_village"];
-      return {farm_id:id,village:vilLabel(vil),submitted:true,surveyor:sub?.["surveyor_info/surveyor_name"],date:(sub?.["date_time/survey_date"]||"").slice(0,10)};
+      return {farm_id:id,village:vilLabel(sub?.["ANS/ANS_village"]),submitted:true,surveyor:sub?.["surveyor_info/surveyor_name"],date:(sub?.["date_time/survey_date"]||"").slice(0,10)};
     });
   }
   const pendingVillages=[...new Set(allFarmIds.map(r=>r.village))].sort();
-  const pendingFiltered=allFarmIds.filter(r=>{const vOk=pendingVillage==="all"||r.village===pendingVillage;const sOk=pendingFilter==="all"||(pendingFilter==="pending"&&!r.submitted)||(pendingFilter==="submitted"&&r.submitted);return vOk&&sOk;});
+  // NEW: Search filter for pending tab
+  const pendingFiltered=allFarmIds.filter(r=>{
+    const vOk=pendingVillage==="all"||r.village===pendingVillage;
+    const sOk=pendingFilter==="all"||(pendingFilter==="pending"&&!r.submitted)||(pendingFilter==="submitted"&&r.submitted);
+    const searchOk=!pendingSearch||r.farm_id.toLowerCase().includes(pendingSearch.toLowerCase())||r.village.toLowerCase().includes(pendingSearch.toLowerCase())||(r.surveyor||"").toLowerCase().includes(pendingSearch.toLowerCase());
+    return vOk&&sOk&&searchOk;
+  });
   const pendingCount=allFarmIds.filter(r=>!r.submitted).length;
   const submittedCount=allFarmIds.filter(r=>r.submitted).length;
   const vilSummary=pendingVillages.map(v=>{const rows=allFarmIds.filter(r=>r.village===v);const sub=rows.filter(r=>r.submitted).length;return{village:v,total:rows.length,submitted:sub,pending:rows.length-sub,pct:rows.length?Math.round((sub/rows.length)*100):0};}).sort((a,b)=>b.pending-a.pending);
 
-  // FLAGS tab
+  // FLAGS tab with search
   const flagsFiltered=flaggedSubs.filter(s=>{
     if(!showDismissed&&s._isDismissed&&!s._manualFlag)return false;
     if(!s._hasActiveFlag&&!showDismissed)return false;
-    if(flagFilter==="all")return true;
-    if(flagFilter==="Manual")return !!s._manualFlag;
-    if(flagFilter==="Dismissed")return s._isDismissed;
-    return s._autoFlags.some(f=>f.label===flagFilter);
+    if(flagFilter!=="all"){if(flagFilter==="Manual")return !!s._manualFlag;if(flagFilter==="Dismissed")return s._isDismissed;return s._autoFlags.some(f=>f.label===flagFilter);}
+    return true;
+  }).filter(s=>{
+    if(!flagSearch)return true;
+    const q=flagSearch.toLowerCase();
+    return (s["ANS/ANS_farm_id"]||"").toLowerCase().includes(q)||(s["ANS/ANS_village"]||"").toLowerCase().includes(q)||(s["surveyor_info/surveyor_name"]||"").toLowerCase().includes(q)||vilLabel(s["ANS/ANS_village"]).toLowerCase().includes(q);
   }).sort((a,b)=>(b._autoFlags?.length||0)-(a._autoFlags?.length||0));
 
   const D={bg:theme==="light"?"#f1f5f9":"#020817",hdr:theme==="light"?"#ffffff":"#0a1628",bdr:theme==="light"?"#e2e8f0":"#1e293b",text:theme==="light"?"#1e293b":"#e2e8f0",muted:theme==="light"?"#6b7280":"#64748b",row1:theme==="light"?"#ffffff":"transparent",row2:theme==="light"?"#f8fafc":"#070e1a",inp:theme==="light"?"#ffffff":"#0f172a",card:theme==="light"?"#ffffff":"#0f172a"};
@@ -218,253 +216,80 @@ export default function App() {
 
   return (
     <>
-      <style>{`
-        html,body{margin:0;padding:0;overflow-y:scroll!important;overflow-x:hidden!important;height:auto!important;}
-        #root{width:100%;height:auto!important;overflow:visible!important;}
-        *{box-sizing:border-box;}
-        ::-webkit-scrollbar{width:5px;height:5px;}
-        ::-webkit-scrollbar-track{background:${theme==="light"?"#f1f5f9":"#0f172a"};}
-        ::-webkit-scrollbar-thumb{background:${theme==="light"?"#cbd5e1":"#334155"};border-radius:3px;}
-        .tb{background:none;border:none;padding:8px 10px;cursor:pointer;font-size:11px;font-weight:600;letter-spacing:.4px;border-bottom:2px solid transparent;color:${D.muted};white-space:nowrap;}
-        .tb.a{color:#0ea5e9;border-bottom-color:#0ea5e9;}
-        .tb:hover{color:${D.text};}
-        .trow:hover td{background:${theme==="light"?"#f0f9ff!important":"#0c2036!important"};}
-        .trow{cursor:pointer;}
-        select{background:${D.inp};color:${D.text};border:1px solid ${D.bdr};padding:5px 8px;border-radius:6px;font-size:11px;outline:none;}
-        .inp{background:${D.inp};border:1px solid ${D.bdr};color:${D.text};padding:7px 12px;border-radius:8px;font-size:13px;outline:none;width:100%;}
-        .inp:focus{border-color:#0ea5e9;}
-        .pill{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;display:inline-block;}
-        .btn{padding:5px 12px;border-radius:6px;border:1px solid;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;}
-        @media(max-width:640px){.sr{flex-direction:column!important;}.cg,.pg{grid-template-columns:1fr!important;}}
-      `}</style>
+      <style>{`html,body{margin:0;padding:0;overflow-y:scroll!important;overflow-x:hidden!important;height:auto!important;}#root{width:100%;height:auto!important;overflow:visible!important;}*{box-sizing:border-box;}::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:${theme==="light"?"#f1f5f9":"#0f172a"}}::-webkit-scrollbar-thumb{background:${theme==="light"?"#cbd5e1":"#334155"};border-radius:3px}.tb{background:none;border:none;padding:8px 10px;cursor:pointer;font-size:11px;font-weight:600;letter-spacing:.4px;border-bottom:2px solid transparent;color:${D.muted};white-space:nowrap}.tb.a{color:#0ea5e9;border-bottom-color:#0ea5e9}.tb:hover{color:${D.text}}.trow:hover td{background:${theme==="light"?"#f0f9ff!important":"#0c2036!important"}}.trow{cursor:pointer}select{background:${D.inp};color:${D.text};border:1px solid ${D.bdr};padding:5px 8px;border-radius:6px;font-size:11px;outline:none}.inp{background:${D.inp};border:1px solid ${D.bdr};color:${D.text};padding:7px 12px;border-radius:8px;font-size:13px;outline:none;width:100%}.inp:focus{border-color:#0ea5e9}.pill{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;display:inline-block}.btn{padding:5px 12px;border-radius:6px;border:1px solid;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap}@media(max-width:640px){.sr{flex-direction:column!important}.cg,.pg{grid-template-columns:1fr!important}}`}</style>
 
       <div style={{background:D.bg,color:D.text,fontFamily:"'Segoe UI',system-ui,sans-serif",width:"100%",minHeight:"100vh"}}>
-
         {/* HEADER */}
         <div style={{borderBottom:`1px solid ${D.bdr}`,padding:isMobile?"0 10px":"0 18px",background:D.hdr,position:"sticky",top:0,zIndex:200}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",paddingTop:8,gap:6,flexWrap:"wrap"}}>
-            <div style={{flex:1,minWidth:0}}>
-              <h1 style={{fontSize:isMobile?12:15,fontWeight:800,color:"#0ea5e9",margin:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>🌾 KoboToolbox Dashboard</h1>
-              <p style={{fontSize:10,color:D.muted}}>{total} sub{totalFlagged>0?` · 🚩${totalFlagged}`:""}{dupCount>0?` · ⚠${dupCount} dup`:""}</p>
-            </div>
-            <div style={{display:"flex",gap:4}}>
-              <button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")} style={{background:theme==="light"?"#1e293b":"#f1f5f9",color:theme==="light"?"#f1f5f9":"#1e293b",border:"none",padding:"4px 10px",borderRadius:20,cursor:"pointer",fontSize:12,fontWeight:700}}>{theme==="dark"?"☀":"🌙"}</button>
-              <button onClick={fetchData} style={{background:"#0ea5e922",border:"1px solid #0ea5e944",color:"#0ea5e9",padding:"4px 10px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:600}}>↺ Refresh</button>
-            </div>
+            <div style={{flex:1,minWidth:0}}><h1 style={{fontSize:isMobile?12:15,fontWeight:800,color:"#0ea5e9",margin:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>🌾 KoboToolbox Dashboard</h1><p style={{fontSize:10,color:D.muted}}>{total} sub{totalFlagged>0?` · 🚩${totalFlagged}`:""}{dupCount>0?` · ⚠${dupCount} dup`:""}</p></div>
+            <div style={{display:"flex",gap:4}}><button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")} style={{background:theme==="light"?"#1e293b":"#f1f5f9",color:theme==="light"?"#f1f5f9":"#1e293b",border:"none",padding:"4px 10px",borderRadius:20,cursor:"pointer",fontSize:12,fontWeight:700}}>{theme==="dark"?"☀":"🌙"}</button><button onClick={fetchData} style={{background:"#0ea5e922",border:"1px solid #0ea5e944",color:"#0ea5e9",padding:"4px 10px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:600}}>↺ Refresh</button></div>
           </div>
-          <div style={{display:"flex",marginTop:2,overflowX:"auto"}}>
-            {tabs.map(t=><button key={t} className={`tb${tab===t?" a":""}`} onClick={()=>setTab(t)}>
-              {t==="flags"?`🚩FLAGS(${totalFlagged})`:t==="pending"?`⏳(${pendingCount})`:t==="table"?`TABLE`:t.toUpperCase()}
-            </button>)}
-          </div>
+          <div style={{display:"flex",marginTop:2,overflowX:"auto"}}>{tabs.map(t=><button key={t} className={`tb${tab===t?" a":""}`} onClick={()=>setTab(t)}>{t==="flags"?`🚩FLAGS(${totalFlagged})`:t==="pending"?`⏳(${pendingCount})`:t.toUpperCase()}</button>)}</div>
         </div>
 
         <div style={{padding:isMobile?10:18}}>
-
           {/* OVERVIEW */}
-          {tab==="overview"&&<div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <div className="sr" style={{display:"flex",flexWrap:"wrap",gap:8}}>
-              <Stat label="Submissions" value={total} color="#0ea5e9" icon="📋" theme={theme}/>
-              <Stat label="GPS" value={withGPS} color="#10b981" icon="📍" theme={theme}/>
-              <Stat label="Avg Acres" value={avgAcres} unit="ac" color="#f59e0b" icon="🌾" theme={theme}/>
-              <Stat label="Avg Yield/ac" value={avgYield} unit="qtl" color="#10b981" icon="📊" theme={theme}/>
-              <Stat label="Villages" value={villageData.length} color="#ec4899" icon="🏘" theme={theme}/>
-              {totalFlagged>0&&<Stat label="Flagged" value={totalFlagged} color="#ef4444" icon="🚩" theme={theme}/>}
-            </div>
-            <div className="cg" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:12}}>
-              <Card title="By Surveyor" theme={theme}><HBar data={surveyorData} xKey="label" yKey="value" color="#0ea5e9" theme={theme}/></Card>
-              <Card title="Yield/Acre by Village" theme={theme}><HBar data={yieldByVil} xKey="village" yKey="avg" color="#10b981" theme={theme}/></Card>
-            </div>
-            <div className="pg" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:12}}>
-              <Card title="Crops" theme={theme}><PieC data={cropData.slice(0,5)}/></Card>
-              <Card title="By Village" theme={theme}><PieC data={villageData.slice(0,7)}/></Card>
-              <Card title="Straw" theme={theme}><PieC data={strawData}/></Card>
-            </div>
-          </div>}
+          {tab==="overview"&&<div style={{display:"flex",flexDirection:"column",gap:14}}><div className="sr" style={{display:"flex",flexWrap:"wrap",gap:8}}><Stat label="Submissions" value={total} color="#0ea5e9" icon="📋" theme={theme}/><Stat label="GPS" value={withGPS} color="#10b981" icon="📍" theme={theme}/><Stat label="Avg Acres" value={avgAcres} unit="ac" color="#f59e0b" icon="🌾" theme={theme}/><Stat label="Avg Yield/ac" value={avgYield} unit="qtl" color="#10b981" icon="📊" theme={theme}/><Stat label="Villages" value={villageData.length} color="#ec4899" icon="🏘" theme={theme}/>{totalFlagged>0&&<Stat label="Flagged" value={totalFlagged} color="#ef4444" icon="🚩" theme={theme}/>}</div><div className="cg" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:12}}><Card title="By Surveyor" theme={theme}><HBar data={surveyorData} xKey="label" yKey="value" color="#0ea5e9" theme={theme}/></Card><Card title="Yield/Acre by Village" theme={theme}><HBar data={yieldByVil} xKey="village" yKey="avg" color="#10b981" theme={theme}/></Card></div><div className="pg" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:12}}><Card title="Crops" theme={theme}><PieC data={cropData.slice(0,5)}/></Card><Card title="Villages" theme={theme}><PieC data={villageData.slice(0,7)}/></Card><Card title="Straw" theme={theme}><PieC data={strawData}/></Card></div></div>}
 
           {/* ANALYTICS */}
-          {tab==="analytics"&&<div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <div className="cg" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:12}}>
-              <Card title="By Village" theme={theme}><HBar data={villageData} xKey="label" yKey="value" color="#0ea5e9" theme={theme} maxItems={25}/></Card>
-              <Card title="By Surveyor" theme={theme}><HBar data={surveyorData} xKey="label" yKey="value" color="#f59e0b" theme={theme}/></Card>
-            </div>
-            <Card title="Village Metrics" theme={theme}>
-              <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:11,minWidth:550}}>
-                <thead><tr style={{borderBottom:`1px solid ${D.bdr}`,background:theme==="light"?"#f8fafc":"#071020"}}>{["Village","#","Ac","Yield","Irrig","DAP","Urea"].map(h=><th key={h} style={{padding:"6px 10px",textAlign:"left",color:D.muted,fontWeight:600}}>{h}</th>)}</tr></thead>
-                <tbody>{Object.entries(submissions.reduce((a,r)=>{const v=vilLabel(r["ANS/ANS_village"]||"?");if(!a[v])a[v]={n:0,ac:0,yi:0,ir:0,dap:0,ur:0};a[v].n++;a[v].ac+=num(r["ANS/ANS_total_acres"]);a[v].yi+=num(r["ANS/ANS_wheat_yield_per_acre"]);a[v].ir+=num(r["ANS/ANS_wheat_irrigations"]);a[v].dap+=num(r["ANS/ANS_dap_kg_per_acre"]);a[v].ur+=num(r["ANS/ANS_urea_total_kg"]);return a;},{})).sort((a,b)=>b[1].n-a[1].n).map(([v,d],i)=><tr key={i} style={{borderBottom:`1px solid ${D.bdr}`,background:i%2?D.row2:D.row1}}><td style={{padding:"5px 10px",fontWeight:600}}>{v}</td><td style={{padding:"5px 10px",color:"#0ea5e9"}}>{d.n}</td><td style={{padding:"5px 10px"}}>{fmt(d.ac/d.n)}</td><td style={{padding:"5px 10px",color:"#10b981"}}>{fmt(d.yi/d.n)}</td><td style={{padding:"5px 10px"}}>{fmt(d.ir/d.n)}</td><td style={{padding:"5px 10px"}}>{fmt(d.dap/d.n,0)}</td><td style={{padding:"5px 10px"}}>{fmt(d.ur/d.n,0)}</td></tr>)}</tbody>
-              </table></div>
-            </Card>
-          </div>}
+          {tab==="analytics"&&<div style={{display:"flex",flexDirection:"column",gap:14}}><div className="cg" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:12}}><Card title="By Village" theme={theme}><HBar data={villageData} xKey="label" yKey="value" color="#0ea5e9" theme={theme} maxItems={25}/></Card><Card title="By Surveyor" theme={theme}><HBar data={surveyorData} xKey="label" yKey="value" color="#f59e0b" theme={theme}/></Card></div><Card title="Village Metrics" theme={theme}><div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:11,minWidth:550}}><thead><tr style={{borderBottom:`1px solid ${D.bdr}`,background:theme==="light"?"#f8fafc":"#071020"}}>{["Village","#","Ac","Yield","Irrig","DAP","Urea"].map(h=><th key={h} style={{padding:"6px 10px",textAlign:"left",color:D.muted,fontWeight:600}}>{h}</th>)}</tr></thead><tbody>{Object.entries(submissions.reduce((a,r)=>{const v=vilLabel(r["ANS/ANS_village"]||"?");if(!a[v])a[v]={n:0,ac:0,yi:0,ir:0,dap:0,ur:0};a[v].n++;a[v].ac+=num(r["ANS/ANS_total_acres"]);a[v].yi+=num(r["ANS/ANS_wheat_yield_per_acre"]);a[v].ir+=num(r["ANS/ANS_wheat_irrigations"]);a[v].dap+=num(r["ANS/ANS_dap_kg_per_acre"]);a[v].ur+=num(r["ANS/ANS_urea_total_kg"]);return a;},{})).sort((a,b)=>b[1].n-a[1].n).map(([v,d],i)=><tr key={i} style={{borderBottom:`1px solid ${D.bdr}`,background:i%2?D.row2:D.row1}}><td style={{padding:"5px 10px",fontWeight:600}}>{v}</td><td style={{padding:"5px 10px",color:"#0ea5e9"}}>{d.n}</td><td style={{padding:"5px 10px"}}>{fmt(d.ac/d.n)}</td><td style={{padding:"5px 10px",color:"#10b981"}}>{fmt(d.yi/d.n)}</td><td style={{padding:"5px 10px"}}>{fmt(d.ir/d.n)}</td><td style={{padding:"5px 10px"}}>{fmt(d.dap/d.n,0)}</td><td style={{padding:"5px 10px"}}>{fmt(d.ur/d.n,0)}</td></tr>)}</tbody></table></div></Card></div>}
 
           {/* MAP */}
-          {tab==="map"&&<div style={{display:"flex",flexDirection:"column",gap:8}}>
-            <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-              <div style={{position:"relative",flex:1,minWidth:160}}><span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontSize:13}}>🔍</span><input className="inp" style={{paddingLeft:30}} value={mapSearch} onChange={e=>{setMapSearch(e.target.value);setSelectedId(null);}} placeholder="Search…"/></div>
-              {["satellite","street"].map(l=><button key={l} onClick={()=>setMapLayer(l)} className="btn" style={{borderColor:mapLayer===l?"#0ea5e9":D.bdr,background:mapLayer===l?"#0ea5e922":"transparent",color:mapLayer===l?"#0ea5e9":D.muted}}>{l==="satellite"?"🛰":"🗺"}{!isMobile&&" "+(l==="satellite"?"Satellite":"Street")}</button>)}
-            </div>
-            <div style={{display:"flex",flexDirection:isMobile?"column":"row",gap:10,height:isMobile?"auto":"calc(100vh - 220px)"}}>
-              {!isMobile&&<div style={{width:230,flexShrink:0,background:D.card,border:`1px solid ${D.bdr}`,borderRadius:10,overflow:"hidden",display:"flex",flexDirection:"column"}}>
-                <div style={{padding:"8px 12px",borderBottom:`1px solid ${D.bdr}`,fontSize:10,color:D.muted,fontWeight:700}}>📍 LOCATIONS</div>
-                <div style={{overflowY:"auto",flex:1}}>{mapFiltered.filter(s=>s._geolocation?.[0]).map(s=><div key={s._id} onClick={()=>setSelectedId(s._id===selectedId?null:s._id)} style={{padding:"6px 12px",borderBottom:`1px solid ${D.bdr}`,cursor:"pointer",background:s._id===selectedId?(theme==="light"?"#eff6ff":"#0f2a4a"):"transparent",borderLeft:s._id===selectedId?"3px solid #0ea5e9":"3px solid transparent"}}><div style={{fontSize:11,fontWeight:700,color:s._id===selectedId?"#0ea5e9":D.text,display:"flex",gap:4}}>{getFlags(s).length>0&&"🚩"}{s["ANS/ANS_farm_id"]||"Farm"}</div><div style={{fontSize:10,color:D.muted}}>{vilLabel(s["ANS/ANS_village"])}</div></div>)}</div>
-              </div>}
-              <div style={{flex:1,position:"relative",borderRadius:10,overflow:"hidden",border:`1px solid ${D.bdr}`,height:isMobile?"70vw":"100%",minHeight:280}}>
-                {leafletLoaded?<MapView submissions={mapFiltered} selectedId={selectedId} onSelect={setSelectedId} mapLayer={mapLayer} isVisible={tab==="map"}/>:<div style={{height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:D.muted}}>Loading…</div>}
-                {mapSelSub&&<div style={{position:"absolute",bottom:isMobile?0:12,right:isMobile?0:12,left:isMobile?0:"auto",width:isMobile?"100%":"260px",maxHeight:"45%",background:theme==="light"?"rgba(255,255,255,0.97)":"rgba(10,22,40,0.97)",border:`1px solid ${D.bdr}`,borderRadius:isMobile?"12px 12px 0 0":"10px",boxShadow:"0 4px 20px #0006",display:"flex",flexDirection:"column",zIndex:500}}>
-                  <div style={{display:"flex",justifyContent:"space-between",padding:"8px 12px",borderBottom:`1px solid ${D.bdr}`,flexShrink:0}}>
-                    <div><div style={{color:"#0ea5e9",fontWeight:800,fontSize:13}}>{getFlags(mapSelSub).length>0&&"🚩 "}{mapSelSub["ANS/ANS_farm_id"]||"Farm"}</div><div style={{color:D.muted,fontSize:10}}>{vilLabel(mapSelSub["ANS/ANS_village"])}</div></div>
-                    <button onClick={()=>setSelectedId(null)} style={{background:"none",border:"none",color:D.muted,cursor:"pointer",fontSize:16}}>✕</button>
-                  </div>
-                  <div style={{overflowY:"auto",padding:"6px 12px",flex:1}}>
-                    {getFlags(mapSelSub).length>0&&<div style={{background:"#ef444418",border:"1px solid #ef444444",borderRadius:6,padding:"4px 8px",marginBottom:4,fontSize:10,color:"#ef4444"}}>{getFlags(mapSelSub).map((f,i)=><div key={i}>🚩 {f.label}: {f.issue}</div>)}</div>}
-                    {Object.entries(mapSelSub).filter(([k,v])=>!k.startsWith("_")&&v!=null&&v!=="").map(([k,v])=><div key={k} style={{display:"flex",justifyContent:"space-between",gap:6,padding:"3px 0",borderBottom:`1px solid ${D.bdr}22`}}><span style={{color:D.muted,fontSize:9,width:95,flexShrink:0,textTransform:"uppercase"}}>{k.replace("ANS/ANS_","").replace("surveyor_info/","").replace("location/","").replace("date_time/","").replace(/_/g," ")}</span><span style={{color:D.text,fontSize:11,fontWeight:500,textAlign:"right",wordBreak:"break-word"}}>{choiceLabelMap[String(v)]||String(v)}</span></div>)}
-                  </div>
-                </div>}
-              </div>
-            </div>
-          </div>}
+          {tab==="map"&&<div style={{display:"flex",flexDirection:"column",gap:8}}><div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><div style={{position:"relative",flex:1,minWidth:160}}><span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontSize:13}}>🔍</span><input className="inp" style={{paddingLeft:30}} value={mapSearch} onChange={e=>{setMapSearch(e.target.value);setSelectedId(null);}} placeholder="Search farm, village, surveyor…"/></div>{["satellite","street"].map(l=><button key={l} onClick={()=>setMapLayer(l)} className="btn" style={{borderColor:mapLayer===l?"#0ea5e9":D.bdr,background:mapLayer===l?"#0ea5e922":"transparent",color:mapLayer===l?"#0ea5e9":D.muted}}>{l==="satellite"?"🛰":"🗺"}{!isMobile&&" "+(l==="satellite"?"Satellite":"Street")}</button>)}</div><div style={{display:"flex",flexDirection:isMobile?"column":"row",gap:10,height:isMobile?"auto":"calc(100vh - 220px)"}}>{!isMobile&&<div style={{width:230,flexShrink:0,background:D.card,border:`1px solid ${D.bdr}`,borderRadius:10,overflow:"hidden",display:"flex",flexDirection:"column"}}><div style={{padding:"8px 12px",borderBottom:`1px solid ${D.bdr}`,fontSize:10,color:D.muted,fontWeight:700}}>📍 LOCATIONS</div><div style={{overflowY:"auto",flex:1}}>{mapFiltered.filter(s=>s._geolocation?.[0]).map(s=><div key={s._id} onClick={()=>setSelectedId(s._id===selectedId?null:s._id)} style={{padding:"6px 12px",borderBottom:`1px solid ${D.bdr}`,cursor:"pointer",background:s._id===selectedId?(theme==="light"?"#eff6ff":"#0f2a4a"):"transparent",borderLeft:s._id===selectedId?"3px solid #0ea5e9":"3px solid transparent"}}><div style={{fontSize:11,fontWeight:700,color:s._id===selectedId?"#0ea5e9":D.text,display:"flex",gap:4}}>{getFlags(s).length>0&&"🚩"}{s["ANS/ANS_farm_id"]||"Farm"}</div><div style={{fontSize:10,color:D.muted}}>{vilLabel(s["ANS/ANS_village"])}</div></div>)}</div></div>}<div style={{flex:1,position:"relative",borderRadius:10,overflow:"hidden",border:`1px solid ${D.bdr}`,height:isMobile?"70vw":"100%",minHeight:280}}>{leafletLoaded?<MapView submissions={mapFiltered} selectedId={selectedId} onSelect={setSelectedId} mapLayer={mapLayer} isVisible={tab==="map"}/>:<div style={{height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:D.muted}}>Loading…</div>}{mapSelSub&&<div style={{position:"absolute",bottom:isMobile?0:12,right:isMobile?0:12,left:isMobile?0:"auto",width:isMobile?"100%":"260px",maxHeight:"45%",background:theme==="light"?"rgba(255,255,255,0.97)":"rgba(10,22,40,0.97)",border:`1px solid ${D.bdr}`,borderRadius:isMobile?"12px 12px 0 0":"10px",boxShadow:"0 4px 20px #0006",display:"flex",flexDirection:"column",zIndex:500}}><div style={{display:"flex",justifyContent:"space-between",padding:"8px 12px",borderBottom:`1px solid ${D.bdr}`,flexShrink:0}}><div><div style={{color:"#0ea5e9",fontWeight:800,fontSize:13}}>{getFlags(mapSelSub).length>0&&"🚩 "}{mapSelSub["ANS/ANS_farm_id"]||"Farm"}</div><div style={{color:D.muted,fontSize:10}}>{vilLabel(mapSelSub["ANS/ANS_village"])}</div></div><button onClick={()=>setSelectedId(null)} style={{background:"none",border:"none",color:D.muted,cursor:"pointer",fontSize:16}}>✕</button></div><div style={{overflowY:"auto",padding:"6px 12px",flex:1}}>{getFlags(mapSelSub).length>0&&<div style={{background:"#ef444418",border:"1px solid #ef444444",borderRadius:6,padding:"4px 8px",marginBottom:4,fontSize:10,color:"#ef4444"}}>{getFlags(mapSelSub).map((f,i)=><div key={i}>🚩 {f.label}: {f.issue}</div>)}</div>}{Object.entries(mapSelSub).filter(([k,v])=>!k.startsWith("_")&&v!=null&&v!=="").map(([k,v])=><div key={k} style={{display:"flex",justifyContent:"space-between",gap:6,padding:"3px 0",borderBottom:`1px solid ${D.bdr}22`}}><span style={{color:D.muted,fontSize:9,width:95,flexShrink:0,textTransform:"uppercase"}}>{k.replace("ANS/ANS_","").replace("surveyor_info/","").replace("location/","").replace("date_time/","").replace(/_/g," ")}</span><span style={{color:D.text,fontSize:11,fontWeight:500,textAlign:"right",wordBreak:"break-word"}}>{choiceLabelMap[String(v)]||String(v)}</span></div>)}</div></div>}</div></div></div>}
 
           {/* TABLE */}
-          {tab==="table"&&<div style={{display:"flex",flexDirection:"column",gap:10}}>
-            {dupCount>0&&<div style={{background:theme==="light"?"#fef3c7":"#1c1a00",border:"1px solid #f59e0b66",borderRadius:8,padding:"8px 14px",fontSize:12,color:"#f59e0b"}}>⚠️ {dupCount} duplicate Farm IDs. Orange=dup, Red=flagged.</div>}
-            <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search…" className="inp" style={{flex:1,minWidth:160}}/>
-              {dupCount>0&&<button onClick={()=>setShowDupOnly(d=>!d)} className="btn" style={{borderColor:showDupOnly?"#ef4444":D.bdr,background:showDupOnly?"#ef444422":"transparent",color:showDupOnly?"#ef4444":D.muted}}>{showDupOnly?"✓ Dup Only":"Dup Only"}</button>}
-              <span style={{fontSize:10,color:D.muted}}>{filtered.length}</span>
-              <DlBtn rows={filtered} filename="survey" theme={theme}/>
-            </div>
-            <div style={{background:D.card,border:`1px solid ${D.bdr}`,borderRadius:10,overflow:"hidden"}}>
-              <div style={{padding:"5px 12px",borderBottom:`1px solid ${D.bdr}`,fontSize:10,color:D.muted,background:theme==="light"?"#f8fafc":"#071020"}}>Tap row → details · 🚩=flag ⚠=dup · newest first</div>
-              <div style={{overflowX:"scroll",overflowY:"auto",maxHeight:"58vh",WebkitOverflowScrolling:"touch"}}>
-                <table style={{borderCollapse:"collapse",fontSize:11,tableLayout:"auto",whiteSpace:"nowrap"}}>
-                  <thead style={{position:"sticky",top:0,zIndex:10}}><tr style={{borderBottom:`1px solid ${D.bdr}`,background:theme==="light"?"#f8fafc":"#071020"}}>
-                    <th style={{padding:"7px 8px",width:28,position:"sticky",left:0,background:theme==="light"?"#f8fafc":"#071020",zIndex:11}}><input type="checkbox" onChange={e=>setSelectedRows(e.target.checked?filtered.map(r=>r._id):[])} checked={selectedRows.length===filtered.length&&filtered.length>0}/></th>
-                    <th style={{padding:"7px 4px",width:24,position:"sticky",left:28,background:theme==="light"?"#f8fafc":"#071020",zIndex:11,fontSize:9}}>⚠🚩</th>
-                    {displayCols.map(c=><th key={c} style={{padding:"7px 10px",textAlign:"left",color:D.muted,fontWeight:600,fontSize:10}}>{c.replace("ANS/ANS_","").replace("surveyor_info/","").replace("location/","").replace("date_time/","").replace(/_/g," ").toUpperCase()}</th>)}
-                  </tr></thead>
-                  <tbody>{filtered.slice(0,300).map((r,i)=>{
-                    const fid=r["ANS/ANS_farm_id"]||r["location/select_farm_id"];
-                    const isDup=fid&&dupSet.has(fid);
-                    const hasF=r._hasActiveFlag;
-                    const bg=hasF?(theme==="light"?"#fef2f2":"#2a0000"):isDup?(theme==="light"?"#fef9c3":"#2d2200"):i%2?D.row2:D.row1;
-                    return<tr key={r._id} className="trow" onClick={()=>setExpandedRow(r)} style={{borderBottom:`1px solid ${D.bdr}`,background:bg}}>
-                      <td style={{padding:"5px 8px",position:"sticky",left:0,background:bg,zIndex:1}} onClick={e=>{e.stopPropagation();setSelectedRows(s=>s.includes(r._id)?s.filter(x=>x!==r._id):[...s,r._id])}}><input type="checkbox" checked={selectedRows.includes(r._id)} onChange={()=>{}} onClick={e=>e.stopPropagation()}/></td>
-                      <td style={{padding:"5px 4px",position:"sticky",left:28,background:bg,zIndex:1,fontSize:12}}>{hasF?"🚩":isDup?"⚠️":""}</td>
-                      {displayCols.map(c=>{const raw=String(r[c]??"");return<td key={c} style={{padding:"5px 10px",maxWidth:180,overflow:"hidden",textOverflow:"ellipsis"}}>{choiceLabelMap[raw]||raw}</td>;})}
-                    </tr>;
-                  })}</tbody>
-                </table>
-              </div>
-            </div>
-          </div>}
+          {tab==="table"&&<div style={{display:"flex",flexDirection:"column",gap:10}}>{dupCount>0&&<div style={{background:theme==="light"?"#fef3c7":"#1c1a00",border:"1px solid #f59e0b66",borderRadius:8,padding:"8px 14px",fontSize:12,color:"#f59e0b"}}>⚠️ {dupCount} duplicate Farm IDs.</div>}<div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search…" className="inp" style={{flex:1,minWidth:160}}/>{dupCount>0&&<button onClick={()=>setShowDupOnly(d=>!d)} className="btn" style={{borderColor:showDupOnly?"#ef4444":D.bdr,background:showDupOnly?"#ef444422":"transparent",color:showDupOnly?"#ef4444":D.muted}}>{showDupOnly?"✓ Dup Only":"Dup Only"}</button>}<span style={{fontSize:10,color:D.muted}}>{filtered.length}</span><DlBtn rows={filtered} filename="survey" theme={theme}/></div><div style={{background:D.card,border:`1px solid ${D.bdr}`,borderRadius:10,overflow:"hidden"}}><div style={{padding:"5px 12px",borderBottom:`1px solid ${D.bdr}`,fontSize:10,color:D.muted,background:theme==="light"?"#f8fafc":"#071020"}}>Tap row → details · 🚩=flag ⚠=dup · newest first</div><div style={{overflowX:"scroll",overflowY:"auto",maxHeight:"58vh",WebkitOverflowScrolling:"touch"}}><table style={{borderCollapse:"collapse",fontSize:11,tableLayout:"auto",whiteSpace:"nowrap"}}><thead style={{position:"sticky",top:0,zIndex:10}}><tr style={{borderBottom:`1px solid ${D.bdr}`,background:theme==="light"?"#f8fafc":"#071020"}}><th style={{padding:"7px 8px",width:28,position:"sticky",left:0,background:theme==="light"?"#f8fafc":"#071020",zIndex:11}}><input type="checkbox" onChange={e=>setSelectedRows(e.target.checked?filtered.map(r=>r._id):[])} checked={selectedRows.length===filtered.length&&filtered.length>0}/></th><th style={{padding:"7px 4px",width:24,position:"sticky",left:28,background:theme==="light"?"#f8fafc":"#071020",zIndex:11,fontSize:9}}>⚠🚩</th>{displayCols.map(c=><th key={c} style={{padding:"7px 10px",textAlign:"left",color:D.muted,fontWeight:600,fontSize:10}}>{c.replace("ANS/ANS_","").replace("surveyor_info/","").replace("location/","").replace("date_time/","").replace(/_/g," ").toUpperCase()}</th>)}</tr></thead><tbody>{filtered.slice(0,300).map((r,i)=>{const fid=r["ANS/ANS_farm_id"]||r["location/select_farm_id"];const isDup=fid&&dupSet.has(fid);const hasF=r._hasActiveFlag;const bg=hasF?(theme==="light"?"#fef2f2":"#2a0000"):isDup?(theme==="light"?"#fef9c3":"#2d2200"):i%2?D.row2:D.row1;return<tr key={r._id} className="trow" onClick={()=>setExpandedRow(r)} style={{borderBottom:`1px solid ${D.bdr}`,background:bg}}><td style={{padding:"5px 8px",position:"sticky",left:0,background:bg,zIndex:1}} onClick={e=>{e.stopPropagation();setSelectedRows(s=>s.includes(r._id)?s.filter(x=>x!==r._id):[...s,r._id])}}><input type="checkbox" checked={selectedRows.includes(r._id)} onChange={()=>{}} onClick={e=>e.stopPropagation()}/></td><td style={{padding:"5px 4px",position:"sticky",left:28,background:bg,zIndex:1,fontSize:12}}>{hasF?"🚩":isDup?"⚠️":""}</td>{displayCols.map(c=>{const raw=String(r[c]??"");return<td key={c} style={{padding:"5px 10px",maxWidth:180,overflow:"hidden",textOverflow:"ellipsis"}}>{choiceLabelMap[raw]||raw}</td>;})}</tr>;})}</tbody></table></div></div></div>}
 
-          {/* FLAGS */}
-          {tab==="flags"&&<div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <div className="sr" style={{display:"flex",flexWrap:"wrap",gap:8}}>
-              <Stat label="Active Flags" value={totalFlagged} color="#ef4444" icon="🚩" theme={theme}/>
-              <Stat label="Clean" value={total-totalFlagged} color="#10b981" icon="✅" theme={theme}/>
-              <Stat label="Dismissed" value={dismissedFlags.length} color="#6b7280" icon="✓" theme={theme}/>
-              <Stat label="Manual" value={Object.keys(manualFlags).length} color="#f59e0b" icon="👁" theme={theme}/>
-            </div>
-            <Card title="Validation Rules" theme={theme}>
-              <div style={{display:"flex",flexDirection:"column",gap:5}}>
-                {RED_FLAG_RULES.map((r,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"3px 0",borderBottom:`1px solid ${D.bdr}22`}}>
-                  <span style={{fontSize:11,flex:1,fontWeight:600}}>{r.label}</span>
-                  <span style={{fontSize:11,color:D.muted}}>{r.min!=null?`Min ${r.min}`:""} {r.max!=null?`Max ${r.max}`:""}</span>
-                  <span className="pill" style={{background:"#ef444422",color:"#ef4444"}}>{flagTypeCounts[r.label]||0}</span>
-                </div>)}
-              </div>
-            </Card>
+          {/* FLAGS with search */}
+          {tab==="flags"&&<div style={{display:"flex",flexDirection:"column",gap:14}}><div className="sr" style={{display:"flex",flexWrap:"wrap",gap:8}}><Stat label="Active" value={totalFlagged} color="#ef4444" icon="🚩" theme={theme}/><Stat label="Clean" value={total-totalFlagged} color="#10b981" icon="✅" theme={theme}/><Stat label="Dismissed" value={dismissedFlags.length} color="#6b7280" icon="✓" theme={theme}/><Stat label="Manual" value={Object.keys(manualFlags).length} color="#f59e0b" icon="👁" theme={theme}/></div>
+            <Card title="Validation Rules" theme={theme}><div style={{display:"flex",flexDirection:"column",gap:5}}>{RED_FLAG_RULES.map((r,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"3px 0",borderBottom:`1px solid ${D.bdr}22`}}><span style={{fontSize:11,flex:1,fontWeight:600}}>{r.label}</span><span style={{fontSize:11,color:D.muted}}>{r.min!=null?`Min ${r.min}`:""} {r.max!=null?`Max ${r.max}`:""}</span><span className="pill" style={{background:"#ef444422",color:"#ef4444"}}>{flagTypeCounts[r.label]||0}</span></div>)}</div></Card>
             {flagTypeData.length>0&&<Card title="By Type" theme={theme}><HBar data={flagTypeData} xKey="label" yKey="value" color="#ef4444" theme={theme}/></Card>}
             <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-              <span style={{fontSize:12,color:D.muted,fontWeight:600}}>Filter:</span>
-              <button onClick={()=>setFlagFilter("all")} className="btn" style={{borderColor:flagFilter==="all"?"#ef4444":D.bdr,background:flagFilter==="all"?"#ef444422":"transparent",color:flagFilter==="all"?"#ef4444":D.muted}}>All ({totalFlagged})</button>
+              {/* NEW: Search in flags */}
+              <input value={flagSearch} onChange={e=>setFlagSearch(e.target.value)} placeholder="🔍 Search flags…" className="inp" style={{flex:1,minWidth:160}}/>
+              <button onClick={()=>setFlagFilter("all")} className="btn" style={{borderColor:flagFilter==="all"?"#ef4444":D.bdr,background:flagFilter==="all"?"#ef444422":"transparent",color:flagFilter==="all"?"#ef4444":D.muted}}>All</button>
               {flagTypeData.map(({label:l,value:v})=><button key={l} onClick={()=>setFlagFilter(l)} className="btn" style={{borderColor:flagFilter===l?"#ef4444":D.bdr,background:flagFilter===l?"#ef444422":"transparent",color:flagFilter===l?"#ef4444":D.muted}}>{l} ({v})</button>)}
-              <label style={{fontSize:11,color:D.muted,display:"flex",alignItems:"center",gap:4,marginLeft:"auto"}}><input type="checkbox" checked={showDismissed} onChange={e=>setShowDismissed(e.target.checked)}/> Show dismissed</label>
-              <DlBtn rows={flagsFiltered.map(r=>({farm_id:r["ANS/ANS_farm_id"],village:vilLabel(r["ANS/ANS_village"]),surveyor:r["surveyor_info/surveyor_name"],flags:(r._autoFlags||[]).map(f=>`${f.label}:${f.issue}`).join("; "),manual_flag:r._manualFlag||"",status:r._isDismissed?"dismissed":"active"}))} filename="flags" theme={theme}/>
+              <label style={{fontSize:11,color:D.muted,display:"flex",alignItems:"center",gap:4}}><input type="checkbox" checked={showDismissed} onChange={e=>setShowDismissed(e.target.checked)}/> Dismissed</label>
+              <DlBtn rows={flagsFiltered.map(r=>({farm_id:r["ANS/ANS_farm_id"],village:vilLabel(r["ANS/ANS_village"]),surveyor:r["surveyor_info/surveyor_name"],flags:(r._autoFlags||[]).map(f=>`${f.label}:${f.issue}`).join("; "),manual:r._manualFlag||"",status:r._isDismissed?"dismissed":"active"}))} filename="flags" theme={theme}/>
             </div>
-            <div style={{background:D.card,border:`1px solid ${D.bdr}`,borderRadius:10,overflow:"hidden"}}>
-              <div style={{overflowX:"auto",overflowY:"auto",maxHeight:"50vh"}}>
-                <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-                  <thead style={{position:"sticky",top:0,zIndex:5}}><tr style={{borderBottom:`1px solid ${D.bdr}`,background:theme==="light"?"#fef2f2":"#1a0000"}}>{["Farm ID","Village","Surveyor","Status","Flags"].map(h=><th key={h} style={{padding:"7px 12px",textAlign:"left",color:"#ef4444",fontWeight:600}}>{h}</th>)}</tr></thead>
-                  <tbody>{flagsFiltered.map((r,i)=><tr key={i} className="trow" onClick={()=>setExpandedRow(r)} style={{borderBottom:`1px solid ${D.bdr}`,background:r._isDismissed?(theme==="light"?"#f8f8f8":"#111"):i%2?(theme==="light"?"#fff":"#0a0000"):(theme==="light"?"#fff8f8":"#120000")}}>
-                    <td style={{padding:"5px 12px",fontFamily:"monospace",fontSize:10}}>{r["ANS/ANS_farm_id"]||"-"}</td>
-                    <td style={{padding:"5px 12px"}}>{vilLabel(r["ANS/ANS_village"])}</td>
-                    <td style={{padding:"5px 12px",color:D.muted}}>{r["surveyor_info/surveyor_name"]||"-"}</td>
-                    <td style={{padding:"5px 12px"}}>{r._isDismissed?<span className="pill" style={{background:"#10b98122",color:"#10b981"}}>✓ OK</span>:r._manualFlag?<span className="pill" style={{background:"#f59e0b22",color:"#f59e0b"}}>👁 Manual</span>:<span className="pill" style={{background:"#ef444422",color:"#ef4444"}}>🚩 Flag</span>}</td>
-                    <td style={{padding:"5px 12px",fontSize:10,color:"#ef4444",maxWidth:250,overflow:"hidden",textOverflow:"ellipsis"}}>{(r._autoFlags||[]).map(f=>`${f.label}:${f.issue}`).join(" · ")}{r._manualFlag?` · 👁${r._manualFlag}`:""}</td>
-                  </tr>)}</tbody>
-                </table>
-                {flagsFiltered.length===0&&<div style={{padding:"20px",textAlign:"center",color:D.muted}}>No flags match this filter.</div>}
-              </div>
-            </div>
+            <div style={{background:D.card,border:`1px solid ${D.bdr}`,borderRadius:10,overflow:"hidden"}}><div style={{overflowX:"auto",overflowY:"auto",maxHeight:"50vh"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}><thead style={{position:"sticky",top:0,zIndex:5}}><tr style={{borderBottom:`1px solid ${D.bdr}`,background:theme==="light"?"#fef2f2":"#1a0000"}}>{["Farm ID","Village","Surveyor","Status","Flags"].map(h=><th key={h} style={{padding:"7px 12px",textAlign:"left",color:"#ef4444",fontWeight:600}}>{h}</th>)}</tr></thead><tbody>{flagsFiltered.map((r,i)=><tr key={i} className="trow" onClick={()=>setExpandedRow(r)} style={{borderBottom:`1px solid ${D.bdr}`,background:r._isDismissed?(theme==="light"?"#f8f8f8":"#111"):i%2?(theme==="light"?"#fff":"#0a0000"):(theme==="light"?"#fff8f8":"#120000")}}><td style={{padding:"5px 12px",fontFamily:"monospace",fontSize:10}}>{r["ANS/ANS_farm_id"]||"-"}</td><td style={{padding:"5px 12px"}}>{vilLabel(r["ANS/ANS_village"])}</td><td style={{padding:"5px 12px",color:D.muted}}>{r["surveyor_info/surveyor_name"]||"-"}</td><td style={{padding:"5px 12px"}}>{r._isDismissed?<span className="pill" style={{background:"#10b98122",color:"#10b981"}}>✓ OK</span>:r._manualFlag?<span className="pill" style={{background:"#f59e0b22",color:"#f59e0b"}}>👁 Manual</span>:<span className="pill" style={{background:"#ef444422",color:"#ef4444"}}>🚩 Flag</span>}</td><td style={{padding:"5px 12px",fontSize:10,color:"#ef4444",maxWidth:250,overflow:"hidden",textOverflow:"ellipsis"}}>{(r._autoFlags||[]).map(f=>`${f.label}:${f.issue}`).join(" · ")}{r._manualFlag?` · 👁${r._manualFlag}`:""}</td></tr>)}</tbody></table>{flagsFiltered.length===0&&<div style={{padding:"20px",textAlign:"center",color:D.muted}}>No flags match.</div>}</div></div>
           </div>}
 
-          {/* PENDING */}
+          {/* PENDING with search */}
           {tab==="pending"&&<div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <div className="sr" style={{display:"flex",flexWrap:"wrap",gap:8}}>
-              <Stat label="Total" value={allFarmIds.length} color="#0ea5e9" icon="🗂" theme={theme}/>
-              <Stat label="Done" value={submittedCount} color="#10b981" icon="✅" theme={theme}/>
-              <Stat label="Pending" value={pendingCount} color="#ef4444" icon="⏳" theme={theme}/>
-              <Stat label="%" value={allFarmIds.length?Math.round((submittedCount/allFarmIds.length)*100):0} unit="%" color="#f59e0b" icon="📈" theme={theme}/>
-            </div>
+            <div className="sr" style={{display:"flex",flexWrap:"wrap",gap:8}}><Stat label="Total" value={allFarmIds.length} color="#0ea5e9" icon="🗂" theme={theme}/><Stat label="Done" value={submittedCount} color="#10b981" icon="✅" theme={theme}/><Stat label="Pending" value={pendingCount} color="#ef4444" icon="⏳" theme={theme}/><Stat label="%" value={allFarmIds.length?Math.round((submittedCount/allFarmIds.length)*100):0} unit="%" color="#f59e0b" icon="📈" theme={theme}/></div>
             <Card title="By Village" theme={theme}><div style={{display:"flex",flexDirection:"column",gap:6}}>{vilSummary.map((v,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:8}}><span style={{width:140,fontSize:11,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.village}</span><div style={{flex:1,background:D.bdr,borderRadius:4,height:18,overflow:"hidden",position:"relative",minWidth:40}}><div style={{width:`${v.pct}%`,height:"100%",borderRadius:4,background:v.pct===100?"#10b981":v.pct>60?"#f59e0b":"#ef4444"}}/><span style={{position:"absolute",left:6,top:"50%",transform:"translateY(-50%)",fontSize:9,fontWeight:700,color:"#fff"}}>{v.pct}%</span></div><span style={{width:80,fontSize:10,flexShrink:0,textAlign:"right"}}><span style={{color:"#10b981"}}>{v.submitted}</span>/{v.total}</span></div>)}</div></Card>
-            <Card title="Farm IDs" theme={theme} noPad extra={<div style={{display:"flex",gap:6,flexWrap:"wrap",padding:"0 14px"}}><select value={pendingVillage} onChange={e=>setPendingVillage(e.target.value)}><option value="all">All Villages</option>{pendingVillages.map(v=><option key={v} value={v}>{v}</option>)}</select><select value={pendingFilter} onChange={e=>setPendingFilter(e.target.value)}><option value="all">All</option><option value="submitted">✅ Done</option><option value="pending">⏳ Pending</option></select><DlBtn rows={pendingFiltered.map(r=>({farm_id:r.farm_id,village:r.village,status:r.submitted?"done":"pending"}))} filename="pending" theme={theme}/></div>}>
-              <div style={{overflowX:"auto",maxHeight:"50vh",overflowY:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}><thead style={{position:"sticky",top:0,zIndex:5}}><tr style={{borderBottom:`1px solid ${D.bdr}`,background:theme==="light"?"#f8fafc":"#071020"}}>{["Farm ID","Village","Status","Surveyor","Date"].map(h=><th key={h} style={{padding:"6px 10px",textAlign:"left",color:D.muted,fontWeight:600}}>{h}</th>)}</tr></thead><tbody>{pendingFiltered.map((r,i)=>{const sub=submissions.find(s=>(s["location/select_farm_id"]||s["ANS/ANS_farm_id"])===r.farm_id);return<tr key={i} style={{borderBottom:`1px solid ${D.bdr}`,background:i%2?D.row2:D.row1}}><td style={{padding:"5px 10px",fontFamily:"monospace",fontSize:10}}>{r.farm_id}</td><td style={{padding:"5px 10px"}}>{r.village}</td><td style={{padding:"5px 10px"}}>{r.submitted?<span className="pill" style={{background:"#10b98122",color:"#10b981"}}>✓</span>:<span className="pill" style={{background:"#ef444422",color:"#ef4444"}}>⏳</span>}</td><td style={{padding:"5px 10px",color:D.muted,fontSize:10}}>{r.surveyor||sub?.["surveyor_info/surveyor_name"]||"-"}</td><td style={{padding:"5px 10px",color:D.muted,fontSize:10}}>{r.date||(sub?.["date_time/survey_date"]||"").slice(0,10)||"-"}</td></tr>;})}</tbody></table></div>
+            <Card title="Farm IDs" theme={theme} noPad extra={<div style={{display:"flex",gap:6,flexWrap:"wrap",padding:"0 14px",alignItems:"center"}}>
+              {/* NEW: Search in pending */}
+              <input value={pendingSearch} onChange={e=>setPendingSearch(e.target.value)} placeholder="🔍 Search farm ID…" className="inp" style={{flex:1,minWidth:140,padding:"5px 10px",fontSize:11}}/>
+              <select value={pendingVillage} onChange={e=>setPendingVillage(e.target.value)}><option value="all">All Villages</option>{pendingVillages.map(v=><option key={v} value={v}>{v}</option>)}</select>
+              <select value={pendingFilter} onChange={e=>setPendingFilter(e.target.value)}><option value="all">All</option><option value="submitted">✅ Done</option><option value="pending">⏳ Pending</option></select>
+              <DlBtn rows={pendingFiltered.map(r=>({farm_id:r.farm_id,village:r.village,status:r.submitted?"done":"pending"}))} filename="pending" theme={theme}/>
+            </div>}>
+              <div style={{overflowX:"auto",maxHeight:"50vh",overflowY:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}><thead style={{position:"sticky",top:0,zIndex:5}}><tr style={{borderBottom:`1px solid ${D.bdr}`,background:theme==="light"?"#f8fafc":"#071020"}}>{["Farm ID","Village","Status","Surveyor","Date"].map(h=><th key={h} style={{padding:"6px 10px",textAlign:"left",color:D.muted,fontWeight:600}}>{h}</th>)}</tr></thead><tbody>{pendingFiltered.map((r,i)=>{const sub=submissions.find(s=>(s["location/select_farm_id"]||s["ANS/ANS_farm_id"])===r.farm_id);return<tr key={i} style={{borderBottom:`1px solid ${D.bdr}`,background:i%2?D.row2:D.row1}}><td style={{padding:"5px 10px",fontFamily:"monospace",fontSize:10}}>{r.farm_id}</td><td style={{padding:"5px 10px"}}>{r.village}</td><td style={{padding:"5px 10px"}}>{r.submitted?<span className="pill" style={{background:"#10b98122",color:"#10b981"}}>✓</span>:<span className="pill" style={{background:"#ef444422",color:"#ef4444"}}>⏳</span>}</td><td style={{padding:"5px 10px",color:D.muted,fontSize:10}}>{r.surveyor||sub?.["surveyor_info/surveyor_name"]||"-"}</td><td style={{padding:"5px 10px",color:D.muted,fontSize:10}}>{r.date||(sub?.["date_time/survey_date"]||"").slice(0,10)||"-"}</td></tr>;})}</tbody></table>{pendingFiltered.length===0&&<div style={{padding:"16px",textAlign:"center",color:D.muted}}>No results.</div>}</div>
             </Card>
           </div>}
         </div>
       </div>
 
-      {/* EXPAND MODAL with manual flag/dismiss buttons */}
-      {expandedRow&&<div onClick={()=>{setExpandedRow(null);setFlagReason("");}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:1000,display:"flex",alignItems:isMobile?"flex-end":"center",justifyContent:"center",padding:isMobile?0:16}}>
-        <div onClick={e=>e.stopPropagation()} style={{background:D.card,border:`1px solid ${D.bdr}`,borderRadius:isMobile?"16px 16px 0 0":"12px",width:"100%",maxWidth:540,maxHeight:isMobile?"85vh":"80vh",overflow:"auto",boxShadow:"0 8px 40px #000a"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",borderBottom:`1px solid ${D.bdr}`,position:"sticky",top:0,background:D.card,zIndex:5}}>
-            <div>
-              <div style={{color:"#0ea5e9",fontWeight:800,fontSize:14}}>{expandedRow._hasActiveFlag&&"🚩 "}{expandedRow["ANS/ANS_farm_id"]||`#${expandedRow._id}`}</div>
-              <div style={{color:D.muted,fontSize:10}}>{vilLabel(expandedRow["ANS/ANS_village"])} · {expandedRow["surveyor_info/surveyor_name"]||""}</div>
-            </div>
-            <button onClick={()=>{setExpandedRow(null);setFlagReason("");}} style={{background:theme==="light"?"#f1f5f9":"#1e293b",border:"none",color:D.text,cursor:"pointer",fontSize:16,width:28,height:28,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
-          </div>
-
-          {/* Auto-flag alerts */}
-          {(expandedRow._autoFlags||[]).length>0&&<div style={{margin:"10px 16px",background:expandedRow._isDismissed?"#10b98118":"#ef444418",border:`1px solid ${expandedRow._isDismissed?"#10b98144":"#ef444444"}`,borderRadius:8,padding:"8px 12px"}}>
-            <div style={{fontSize:11,color:expandedRow._isDismissed?"#10b981":"#ef4444",fontWeight:700,marginBottom:4}}>{expandedRow._isDismissed?"✓ Reviewed & Marked Normal":"🚩 Auto-Detected Flags:"}</div>
-            {expandedRow._autoFlags.map((f,i)=><div key={i} style={{fontSize:11,color:expandedRow._isDismissed?"#10b981":"#ef4444",padding:"2px 0"}}>• {f.label}: <b>{f.issue}</b></div>)}
-          </div>}
-
-          {/* Manual flag alert */}
-          {expandedRow._manualFlag&&<div style={{margin:"10px 16px",background:"#f59e0b18",border:"1px solid #f59e0b44",borderRadius:8,padding:"8px 12px"}}>
-            <div style={{fontSize:11,color:"#f59e0b",fontWeight:700}}>👁 Manually Flagged:</div>
-            <div style={{fontSize:11,color:"#f59e0b"}}>{expandedRow._manualFlag}</div>
-          </div>}
-
-          {/* ACTION BUTTONS */}
-          <div style={{padding:"8px 16px",display:"flex",gap:6,flexWrap:"wrap",borderBottom:`1px solid ${D.bdr}`}}>
-            {/* Dismiss / Undismiss auto-flags */}
-            {(expandedRow._autoFlags||[]).length>0&&(
-              expandedRow._isDismissed
-                ?<button onClick={()=>{undismiss(String(expandedRow._id));setExpandedRow({...expandedRow,_isDismissed:false,_hasActiveFlag:true});}} className="btn" style={{borderColor:"#f59e0b",background:"#f59e0b22",color:"#f59e0b"}}>↩ Undo Dismiss</button>
-                :<button onClick={()=>{dismissFlag(String(expandedRow._id));setExpandedRow({...expandedRow,_isDismissed:true,_hasActiveFlag:!!expandedRow._manualFlag});}} className="btn" style={{borderColor:"#10b981",background:"#10b98122",color:"#10b981"}}>✓ Mark as Normal</button>
-            )}
-            {/* Add / Remove manual flag */}
-            {expandedRow._manualFlag
-              ?<button onClick={()=>{removeManualFlag(String(expandedRow._id));setExpandedRow({...expandedRow,_manualFlag:null,_hasActiveFlag:!expandedRow._isDismissed&&(expandedRow._autoFlags||[]).length>0});}} className="btn" style={{borderColor:"#10b981",background:"#10b98122",color:"#10b981"}}>✓ Remove My Flag</button>
-              :<>
-                <input value={flagReason} onChange={e=>setFlagReason(e.target.value)} placeholder="Reason (optional)" className="inp" style={{flex:1,minWidth:120,padding:"5px 10px",fontSize:11}}/>
-                <button onClick={()=>{addManualFlag(String(expandedRow._id),flagReason||"Flagged manually");setExpandedRow({...expandedRow,_manualFlag:flagReason||"Flagged manually",_hasActiveFlag:true});setFlagReason("");}} className="btn" style={{borderColor:"#ef4444",background:"#ef444422",color:"#ef4444"}}>🚩 Flag This</button>
-              </>
-            }
-          </div>
-
-          {/* All fields */}
-          <div style={{padding:"8px 16px"}}>
-            {Object.entries(expandedRow).filter(([k,v])=>!k.startsWith("_")&&v!=null&&v!=="").map(([k,v])=><div key={k} style={{display:"flex",gap:10,padding:"5px 0",borderBottom:`1px solid ${D.bdr}22`,alignItems:"flex-start"}}>
-              <span style={{color:D.muted,fontSize:9,width:140,flexShrink:0,textTransform:"uppercase",fontFamily:"monospace"}}>{k.replace("ANS/ANS_","").replace("surveyor_info/","").replace("location/","").replace("date_time/","").replace(/_/g," ")}</span>
-              <span style={{color:D.text,fontSize:12,fontWeight:500,flex:1,wordBreak:"break-word"}}>{choiceLabelMap[String(v)]||String(v)}</span>
-            </div>)}
-          </div>
+      {/* EXPAND MODAL */}
+      {expandedRow&&<div onClick={()=>{setExpandedRow(null);setFlagReason("");}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:1000,display:"flex",alignItems:isMobile?"flex-end":"center",justifyContent:"center",padding:isMobile?0:16}}><div onClick={e=>e.stopPropagation()} style={{background:D.card,border:`1px solid ${D.bdr}`,borderRadius:isMobile?"16px 16px 0 0":"12px",width:"100%",maxWidth:540,maxHeight:isMobile?"85vh":"80vh",overflow:"auto",boxShadow:"0 8px 40px #000a"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",borderBottom:`1px solid ${D.bdr}`,position:"sticky",top:0,background:D.card,zIndex:5}}><div><div style={{color:"#0ea5e9",fontWeight:800,fontSize:14}}>{expandedRow._hasActiveFlag&&"🚩 "}{expandedRow["ANS/ANS_farm_id"]||`#${expandedRow._id}`}</div><div style={{color:D.muted,fontSize:10}}>{vilLabel(expandedRow["ANS/ANS_village"])} · {expandedRow["surveyor_info/surveyor_name"]||""}</div></div><button onClick={()=>{setExpandedRow(null);setFlagReason("");}} style={{background:theme==="light"?"#f1f5f9":"#1e293b",border:"none",color:D.text,cursor:"pointer",fontSize:16,width:28,height:28,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button></div>
+        {(expandedRow._autoFlags||[]).length>0&&<div style={{margin:"10px 16px",background:expandedRow._isDismissed?"#10b98118":"#ef444418",border:`1px solid ${expandedRow._isDismissed?"#10b98144":"#ef444444"}`,borderRadius:8,padding:"8px 12px"}}><div style={{fontSize:11,color:expandedRow._isDismissed?"#10b981":"#ef4444",fontWeight:700,marginBottom:4}}>{expandedRow._isDismissed?"✓ Reviewed & Marked Normal":"🚩 Auto-Detected Flags:"}</div>{expandedRow._autoFlags.map((f,i)=><div key={i} style={{fontSize:11,color:expandedRow._isDismissed?"#10b981":"#ef4444"}}>• {f.label}: <b>{f.issue}</b></div>)}</div>}
+        {expandedRow._manualFlag&&<div style={{margin:"10px 16px",background:"#f59e0b18",border:"1px solid #f59e0b44",borderRadius:8,padding:"8px 12px"}}><div style={{fontSize:11,color:"#f59e0b",fontWeight:700}}>👁 Manually Flagged: {expandedRow._manualFlag}</div></div>}
+        <div style={{padding:"8px 16px",display:"flex",gap:6,flexWrap:"wrap",borderBottom:`1px solid ${D.bdr}`}}>
+          {(expandedRow._autoFlags||[]).length>0&&(expandedRow._isDismissed
+            ?<button onClick={()=>{undismiss(String(expandedRow._id));setExpandedRow({...expandedRow,_isDismissed:false,_hasActiveFlag:true});}} className="btn" style={{borderColor:"#f59e0b",background:"#f59e0b22",color:"#f59e0b"}}>↩ Undo Dismiss</button>
+            :<button onClick={()=>{dismissFlag(String(expandedRow._id));setExpandedRow({...expandedRow,_isDismissed:true,_hasActiveFlag:!!expandedRow._manualFlag});}} className="btn" style={{borderColor:"#10b981",background:"#10b98122",color:"#10b981"}}>✓ Mark as Normal</button>
+          )}
+          {expandedRow._manualFlag
+            ?<button onClick={()=>{removeManualFlag(String(expandedRow._id));setExpandedRow({...expandedRow,_manualFlag:null,_hasActiveFlag:!expandedRow._isDismissed&&(expandedRow._autoFlags||[]).length>0});}} className="btn" style={{borderColor:"#10b981",background:"#10b98122",color:"#10b981"}}>✓ Remove My Flag</button>
+            :<><input value={flagReason} onChange={e=>setFlagReason(e.target.value)} placeholder="Reason (optional)" className="inp" style={{flex:1,minWidth:120,padding:"5px 10px",fontSize:11}}/><button onClick={()=>{addManualFlag(String(expandedRow._id),flagReason||"Flagged manually");setExpandedRow({...expandedRow,_manualFlag:flagReason||"Flagged manually",_hasActiveFlag:true});setFlagReason("");}} className="btn" style={{borderColor:"#ef4444",background:"#ef444422",color:"#ef4444"}}>🚩 Flag This</button></>
+          }
         </div>
-      </div>}
+        <div style={{padding:"8px 16px"}}>{Object.entries(expandedRow).filter(([k,v])=>!k.startsWith("_")&&v!=null&&v!=="").map(([k,v])=><div key={k} style={{display:"flex",gap:10,padding:"5px 0",borderBottom:`1px solid ${D.bdr}22`,alignItems:"flex-start"}}><span style={{color:D.muted,fontSize:9,width:140,flexShrink:0,textTransform:"uppercase",fontFamily:"monospace"}}>{k.replace("ANS/ANS_","").replace("surveyor_info/","").replace("location/","").replace("date_time/","").replace(/_/g," ")}</span><span style={{color:D.text,fontSize:12,fontWeight:500,flex:1,wordBreak:"break-word"}}>{choiceLabelMap[String(v)]||String(v)}</span></div>)}</div>
+      </div></div>}
     </>
   );
 }
