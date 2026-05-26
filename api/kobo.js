@@ -1,46 +1,35 @@
 export default async function handler(req, res) {
-  // CORS + preflight
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
+  if (req.method === "OPTIONS") return res.status(200).end();
 
-  const apiToken = process.env.KOBO_API_TOKEN || "cfda7c6ec2ad5c686e180747c4c005995710445a";
-  const path = req.query.path || "";
+  const { path } = req.query;
+  if (!path) return res.status(400).json({ error: "Missing path param" });
 
-  if (!path) {
-    return res.status(400).json({ error: "Missing path query parameter" });
-  }
-
-  const url = `https://kf.kobotoolbox.org${path}`;
-  const headers = {
-    Authorization: `Token ${apiToken}`,
-    Accept: "application/json",
-    "Content-Type": "application/json",
-  };
+  const TOKEN =
+    process.env.KOBO_API_TOKEN || "cfda7c6ec2ad5c686e180747c4c005995710445a";
+  const koboUrl = `https://kf.kobotoolbox.org${path}`;
 
   try {
-    let options = {
+    const opts = {
       method: req.method,
-      headers,
+      headers: {
+        Authorization: `Token ${TOKEN}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
     };
-
-    // Forward body for POST, PATCH, PUT
-    if (req.method === "POST" || req.method === "PATCH" || req.method === "PUT") {
-      if (req.body) {
-        options.body = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
-      }
+    if ((req.method === "PATCH" || req.method === "POST") && req.body) {
+      opts.body = JSON.stringify(req.body);
     }
-
-    const response = await fetch(url, options);
-    const data = await response.json();
-
-    res.status(response.status).json(data);
-  } catch (error) {
-    console.error("Proxy error:", error);
-    res.status(500).json({ error: error.message });
+    const upstream = await fetch(koboUrl, opts);
+    const text = await upstream.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { raw: text }; }
+    res.status(upstream.status).json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 }
