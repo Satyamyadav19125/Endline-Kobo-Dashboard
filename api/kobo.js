@@ -1,6 +1,6 @@
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,PATCH,PUT,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -12,14 +12,26 @@ export default async function handler(req, res) {
     const cleanPath = koboPath.startsWith('/') ? koboPath : '/' + koboPath;
     const url = 'https://kf.kobotoolbox.org' + cleanPath;
 
-    const r = await fetch(url, {
+    const fetchOpts = {
+      method: req.method || 'GET',
       headers: {
         'Authorization': 'Token cfda7c6ec2ad5c686e180747c4c005995710445a',
         'Accept': 'application/json',
       }
-    });
+    };
 
-    if (!r.ok) return res.status(r.status).json({ error: `KoboToolbox returned ${r.status}` });
+    // For PATCH/PUT, forward the request body
+    if (req.method === 'PATCH' || req.method === 'PUT') {
+      fetchOpts.headers['Content-Type'] = 'application/json';
+      fetchOpts.body = JSON.stringify(req.body);
+    }
+
+    const r = await fetch(url, fetchOpts);
+
+    if (!r.ok) {
+      const errText = await r.text();
+      return res.status(r.status).json({ error: `KoboToolbox returned ${r.status}`, detail: errText });
+    }
 
     const text = await r.text();
     res.setHeader('Content-Type', 'application/json');
@@ -28,4 +40,3 @@ export default async function handler(req, res) {
     res.status(500).json({ error: err.message });
   }
 }
-
