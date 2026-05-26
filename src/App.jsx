@@ -1,777 +1,1137 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 
+/* ─── CONFIG ─────────────────────────────────────────────── */
 const API_TOKEN = "cfda7c6ec2ad5c686e180747c4c005995710445a";
 const FORM_UID  = "aagjSQnDRWQLs778Ri8AkH";
-const HEADERS   = { Authorization: `Token ${API_TOKEN}`, Accept: "application/json" };
 const num = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
-const fmt = (n, d=1) => Number(n).toFixed(d);
-const COLORS = ["#0ea5e9","#ef4444","#f59e0b","#10b981","#8b5cf6","#f97316","#ec4899","#84cc16"];
-const SAT_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
-const STR_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+const fmt = (n, d = 1) => Number(n).toFixed(d);
 
-// Fields always hidden in expanded form view
-const ALWAYS_HIDE = new Set([
-  "formhub/uuid","meta/instanceID","meta/deprecatedID","meta/rootUuid",
-  "start","end","today","deviceid","simserial","subscriberid","imei","__version__",
-  "_xform_id_string","_uuid","_submitted_by","_tags","_notes","_validation_status",
-  "_status","_geolocation","_submission_time",
-]);
-// Survey question types shown to user
-const USER_TYPES = new Set([
-  "text","integer","decimal","select_one","select_multiple","note",
-  "geopoint","date","time","datetime","image","audio","video","file",
-  "barcode","range","rating","rank","photo",
-]);
-// Types NEVER shown
-const CALC_TYPES = new Set(["calculate","hidden","deviceid","start","end","today"]);
+/* ─── THEME ──────────────────────────────────────────────── */
+const L = {
+  bg:"#f0f4f8", card:"#ffffff", text:"#0f172a", muted:"#64748b",
+  bdr:"#e2e8f0", accent:"#0284c7", danger:"#ef4444", warn:"#f59e0b",
+  success:"#10b981", hover:"#f8fafc", tag:"#e0f2fe", tagT:"#0369a1",
+};
+const DK = {
+  bg:"#0f172a", card:"#1e293b", text:"#f1f5f9", muted:"#94a3b8",
+  bdr:"#334155", accent:"#38bdf8", danger:"#f87171", warn:"#fbbf24",
+  success:"#34d399", hover:"#334155", tag:"#0c4a6e", tagT:"#7dd3fc",
+};
 
-const DEFAULT_FLAG_RULES = [
-  { field:"ANS/ANS_total_acres",          label:"Total Acres",        min:null, max:30,  enabled:true },
-  { field:"ANS/ANS_wheat_yield_per_acre", label:"Yield/Acre (qtl)",   min:15,   max:28,  enabled:true },
-  { field:"ANS/ANS_dap_kg_per_acre",      label:"DAP kg/Acre",        min:40,   max:70,  enabled:true },
-  { field:"ANS/ANS_urea_total_bags",      label:"Urea Bags",          min:3,    max:5,   enabled:true },
-  { field:"ANS/ANS_urea_bag_kg",          label:"Urea Bag Size (kg)", min:45,   max:50,  enabled:true },
+/* ─── INTERNAL FIELD FILTER ──────────────────────────────── */
+const HIDE_KEYS = new Set([
+  "_id","_uuid","_submitted_by","_tags","_notes","_validation_status","_index",
+  "formhub/uuid","meta/instanceID","meta/deprecatedID","__version__","_attachments",
+  "_status","_geolocation","_submission_time","_submitted_by","_xform_id_string",
+  "_bamboo_dataset_id","_edited","_last_edited","_root_uuid","start","end",
+]);
+const HIDE_PAT = /^(_|formhub|meta\/|__)/;
+const CALC_PAT = /calculate|calculated|__/i;
+
+/* ─── DEFAULT FLAG RULES ─────────────────────────────────── */
+const DEFAULT_RULES = [
+  { id:"r1", pat:"total_acres",         label:"Total Acres",       min:null, max:30,  unit:"ac",   active:true  },
+  { id:"r2", pat:"yield_per_acre",      label:"Yield / Acre",      min:15,   max:28,  unit:"qtl",  active:true  },
+  { id:"r3", pat:"dap_kg",              label:"DAP kg / Acre",     min:40,   max:70,  unit:"kg",   active:true  },
+  { id:"r4", pat:"urea_bags",           label:"Urea Bags",         min:3,    max:5,   unit:"bags", active:true  },
+  { id:"r5", pat:"urea_bag_size",       label:"Urea Bag Size",     min:45,   max:50,  unit:"kg",   active:true  },
+  { id:"r6", pat:"bigha",               label:"Bigha / Acre",      min:4,    max:7,   unit:"",     active:false },
+  { id:"r7", pat:"total_irrig",         label:"Total Irrigations", min:2,    max:6,   unit:"",     active:false },
+  { id:"r8", pat:"irrigation_hour",     label:"Irrigation Hrs/Day",min:3,    max:8,   unit:"hrs",  active:false },
+  { id:"r9", pat:"days_irrigation",     label:"Days / Irrigation", min:5,    max:8,   unit:"days", active:false },
+  { id:"r10",pat:"keara",               label:"Keara",             min:2,    max:7,   unit:"",     active:false },
 ];
 
-function checkRule(sub, rule) {
-  if (!rule.enabled) return null;
-  const v = sub[rule.field];
-  if (v === undefined || v === null || v === "") return null;
-  const n = num(v);
-  if (n <= 0) return null;
-  if (rule.max !== null && rule.max !== "" && n > Number(rule.max)) return { label:rule.label, issue:`${n} > max ${rule.max}` };
-  if (rule.min !== null && rule.min !== "" && n < Number(rule.min)) return { label:rule.label, issue:`${n} < min ${rule.min}` };
-  return null;
-}
-const getFlags = (sub, rules) => rules.map(r => checkRule(sub, r)).filter(Boolean);
+/* ─── VILLAGE FALLBACK ───────────────────────────────────── */
+const VIL_FB = {
+  AG:"Agwanpur", AS:"Aaspur", IC:"Ichawad", MA:"Mahua",
+  MH:"Mahuwakhurd", MU:"Muradpur", RA:"Rampur", SW:"Sawarna", WA:"Wazirpur",
+};
 
-function ls(key, fb) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fb; } catch { return fb; } }
-function sw(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} }
+/* ─── LS HELPERS ─────────────────────────────────────────── */
+const lsGet = (k, def) => { try { const v=localStorage.getItem(k); return v?JSON.parse(v):def; } catch{ return def; }};
+const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch{} };
 
-// Build map: submissionKey -> { label, type, order } from survey metadata.
-// KoboToolbox submission keys use $autoname for field parts (e.g. "ANS/ANS_total_acres")
-// while f.name might be just "total_acres". We register BOTH paths so matching always works.
-function buildFieldMap(fields) {
-  const map = {}, stack = [];
-  let order = 0;
-  (function walk(arr) {
-    for (const f of (arr||[])) {
-      const type  = f.type||"";
-      const gname = f.name || "";                 // group name (used in stack)
-      const fauto = f.$autoname || f.name || "";  // $autoname = what appears in submission keys
-      const fname = f.name || "";                 // plain name (fallback)
+/* ─── API CALL ───────────────────────────────────────────── */
+const kobo = (path, opts={}) =>
+  fetch(`/api/kobo?path=${encodeURIComponent(path)}`, {
+    ...opts,
+    headers:{ "Content-Type":"application/json", ...(opts.headers||{}) },
+    cache:"no-store",
+  }).then(r => r.json());
 
-      if (type==="begin_group"||type==="begin_repeat") { stack.push(gname); }
-      else if (type==="end_group"||type==="end_repeat") { stack.pop(); }
-      else if (fauto && !CALC_TYPES.has(type) && USER_TYPES.has(type)) {
-        const lbl = Array.isArray(f.label) ? (f.label[0]||fauto) : (f.label||fauto);
-        const ord = order++;
-        // Primary: path using $autoname — this is what appears in actual submission JSON
-        const p1 = stack.length ? `${stack.join("/")}/${fauto}` : fauto;
-        map[p1] = { label:lbl, type, order:ord };
-        // Secondary: path using plain name (in case $autoname not present or differs)
-        if (fname && fname !== fauto) {
-          const p2 = stack.length ? `${stack.join("/")}/${fname}` : fname;
-          if (!map[p2]) map[p2] = { label:lbl, type, order:ord };
-        }
-      }
-      if (f.children) walk(f.children);
-    }
-  })(fields);
-  return map;
-}
+/* ─── MAP TILE URLS ──────────────────────────────────────── */
+const SAT = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+const STR = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
 
-// Return clean, ordered fields for display — exactly what user fills.
-// Fallback (no fieldMap): hide all known internal/meta/calculated keys.
-const INTERNAL_PATTERNS = [
-  /^_/, /^formhub\//, /^meta\//, /^start$/, /^end$/, /^today$/,
-  /^deviceid$/, /^simserial$/, /^subscriberid$/, /^imei$/, /^__version__$/,
-  /calculate/i, /\/calc_/, /_calc$/, /\/_/,
-];
-function displayFields(sub, fieldMap, choiceMap) {
-  const hasMap = Object.keys(fieldMap).length > 0;
-  let entries = Object.entries(sub).filter(([k, v]) => {
-    if (ALWAYS_HIDE.has(k) || k.startsWith("_")) return false;
-    if (v === null || v === undefined || v === "") return false;
-    if (hasMap) return k in fieldMap;
-    // Fallback: hide anything matching internal patterns
-    if (INTERNAL_PATTERNS.some(p => p.test(k))) return false;
-    return true;
-  });
-  if (hasMap) entries.sort(([a],[b]) => (fieldMap[a]?.order??999) - (fieldMap[b]?.order??999));
-  return entries.map(([k, v]) => {
-    const raw = String(v);
-    // Resolve choice labels — handle space-separated multi-select values
-    const resolved = raw.split(" ").map(p => choiceMap[p]||p).join(", ");
-    return {
-      key: k,
-      label: fieldMap[k]?.label || k.split("/").pop().replace(/_/g," "),
-      value: resolved !== raw ? resolved : (choiceMap[raw] || raw),
-    };
-  });
-}
+/* ══════════════════════════════════════════════════════════ */
+export default function App() {
+  /* ── state ── */
+  const [dark, setDark]           = useState(false);
+  const [tab, setTab]             = useState("overview");
+  const [subs, setSubs]           = useState([]);
+  const [formDef, setFormDef]     = useState(null); // {survey, choices}
+  const [loading, setLoading]     = useState(true);
+  const [err, setErr]             = useState(null);
+  const [rules, setRules]         = useState(() => lsGet("kd_rules", DEFAULT_RULES));
+  const [manFlags, setManFlags]   = useState(() => lsGet("kd_manflags", {}));
+  const [dismissals, setDismissal] = useState(() => lsGet("kd_dismiss", {}));
+  const [notes, setNotes]         = useState(() => lsGet("kd_notes", {}));
+  const [modal, setModal]         = useState(null);  // form popup
+  const [editMode, setEditMode]   = useState(false);
+  const [editData, setEditData]   = useState({});
+  const [saving, setSaving]       = useState(false);
+  const [vilMap, setVilMap]       = useState(VIL_FB);
+  const [choiceMap, setChoiceMap] = useState({});
+  const [surveyFields, setSurveyFields] = useState([]); // ordered visible fields
+  /* table */
+  const [selRows, setSelRows]     = useState(new Set());
+  const [colVis, setColVis]       = useState(() => lsGet("kd_cols", null));
+  const [showColMenu, setShowColMenu] = useState(false);
+  const [tableFilter, setTableFilter] = useState("all");
+  const [tableSearch, setTableSearch] = useState("");
+  const [tableSort, setTableSort] = useState("newest");
+  /* pending */
+  const [pendSearch, setPendSearch] = useState("");
+  const [pendVil, setPendVil]     = useState("all");
+  const [pendSort, setPendSort]   = useState("newest");
+  /* flags */
+  const [flagSearch, setFlagSearch] = useState("");
+  /* map */
+  const [mapSearch, setMapSearch] = useState("");
+  const [satellite, setSatellite] = useState(true);
+  const [leafletOK, setLeafletOK] = useState(false);
+  const mapRef = useRef(null);
+  const mapInst = useRef(null);
+  const markersRef = useRef([]);
+  /* settings new rule */
+  const [newRule, setNewRule]     = useState({ label:"", pat:"", min:"", max:"", unit:"" });
 
-// ─── Mini Map (Leaflet) ─────────────────────────────────────────────────────
-function MiniMap({ lat, lng, leafletOK }) {
-  const ref = useRef(null), mref = useRef(null);
-  useEffect(() => {
-    if (!ref.current || !window.L) return;
-    // Destroy previous instance if coords changed
-    if (mref.current) { mref.current.remove(); mref.current = null; }
-    const L = window.L;
-    const m = L.map(ref.current, {
-      zoomControl:false, attributionControl:false,
-      dragging:false, scrollWheelZoom:false,
-      doubleClickZoom:false, touchZoom:false,
-    }).setView([lat,lng], 14);
-    L.tileLayer(STR_URL).addTo(m);
-    const ico = L.divIcon({ className:"",
-      html:`<div style="width:14px;height:14px;border-radius:50%;background:#ef4444;border:2px solid #fff;box-shadow:0 2px 8px #0006"></div>`,
-      iconSize:[14,14], iconAnchor:[7,7] });
-    L.marker([lat,lng],{icon:ico}).addTo(m);
-    mref.current = m;
-    return () => { if (mref.current) { mref.current.remove(); mref.current = null; } };
-  // leafletOK as dep ensures map renders if Leaflet loads after modal opens
-  }, [lat, lng, leafletOK]);
-  return (
-    <div style={{ position:"relative", borderRadius:8, overflow:"hidden", marginBottom:8, border:"1px solid #e2e8f0" }}>
-      <div ref={ref} style={{ height:110, width:"100%" }} />
-      <a href={`https://maps.google.com/maps?q=${lat},${lng}`} target="_blank" rel="noopener noreferrer"
-        style={{ position:"absolute",bottom:5,right:5,background:"rgba(0,0,0,.7)",color:"#fff",fontSize:10,padding:"2px 8px",borderRadius:4,textDecoration:"none",fontWeight:700 }}>
-        Open Maps ↗
-      </a>
-    </div>
-  );
-}
+  const D = dark ? DK : L;
 
-// ─── Shared Submission Modal ────────────────────────────────────────────────
-function SubModal({ sub, onClose, fieldMap, choiceMap, flagRules, vilLabel,
-  dismissed, manualFlags, flagDrafts, dismissDrafts,
-  onDismiss, onUndismiss, onAddFlag, onRemoveFlag,
-  onFlagDraftChange, onDismissDraftChange,
-  allowEdit, isMobile, D, theme, leafletOK }) {
+  /* ── persist ── */
+  useEffect(()=>lsSet("kd_rules", rules), [rules]);
+  useEffect(()=>lsSet("kd_manflags", manFlags), [manFlags]);
+  useEffect(()=>lsSet("kd_dismiss", dismissals), [dismissals]);
+  useEffect(()=>lsSet("kd_notes", notes), [notes]);
+  useEffect(()=>lsSet("kd_cols", colVis), [colVis]);
 
-  const [editMode, setEditMode] = useState(false);
-  const [editData, setEditData] = useState({});
-  const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState("");
+  /* ── Leaflet ── */
+  useEffect(()=>{
+    if(window.L){ setLeafletOK(true); return; }
+    const css=document.createElement("link");
+    css.rel="stylesheet"; css.href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+    document.head.appendChild(css);
+    const sc=document.createElement("script");
+    sc.src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    sc.onload=()=>setLeafletOK(true);
+    document.head.appendChild(sc);
+  },[]);
 
-  const sid = String(sub._id);
-  const autoFlags = getFlags(sub, flagRules);
-  const isDismissed = dismissed.includes(sid);
-  const manualNote = manualFlags[sid] || null;
-  // GPS: valid only if both lat & lng are real non-zero numbers
-  const gps = sub._geolocation;
-  const lat = Array.isArray(gps) ? parseFloat(gps[0]) : NaN;
-  const lng = Array.isArray(gps) ? parseFloat(gps[1]) : NaN;
-  const hasGPS = !isNaN(lat) && !isNaN(lng) && (Math.abs(lat) > 0.001 || Math.abs(lng) > 0.001);
-  const fields = useMemo(() => displayFields(sub, fieldMap, choiceMap), [sub, fieldMap, choiceMap]);
-
-  const handleSave = async () => {
-    if (!Object.keys(editData).length) return;
-    setSaving(true); setSaveMsg("");
+  /* ── fetch data ── */
+  const fetchAll = useCallback(async()=>{
+    setLoading(true); setErr(null);
     try {
-      const r = await fetch(`/api/kobo?path=${encodeURIComponent(`/api/v2/assets/${FORM_UID}/data/${sub._id}/`)}`,
-        { method:"PATCH", headers:{...HEADERS,"Content-Type":"application/json"}, body:JSON.stringify(editData) });
-      if (!r.ok) throw new Error(`${r.status}`);
-      setSaveMsg("✅ Saved to KoboToolbox!");
-      setTimeout(() => { setSaveMsg(""); setEditMode(false); setEditData({}); }, 2000);
-    } catch(e) { setSaveMsg(`❌ ${e.message}`); } finally { setSaving(false); }
-  };
+      /* form definition */
+      const def = await kobo(`/api/v2/assets/${FORM_UID}/?format=json`);
+      if(def?.content){
+        const survey = def.content.survey || [];
+        const choices = def.content.choices || [];
 
-  return (
-    <div onClick={onClose} style={{ position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:1000,
-      display:"flex",alignItems:isMobile?"flex-end":"center",justifyContent:"center",padding:isMobile?0:16 }}>
-      <div onClick={e=>e.stopPropagation()} style={{ background:D.card,border:`1px solid ${D.bdr}`,
-        borderRadius:isMobile?"16px 16px 0 0":"12px",width:"100%",maxWidth:560,
-        maxHeight:isMobile?"90vh":"86vh",display:"flex",flexDirection:"column",boxShadow:"0 8px 40px #000a" }}>
+        /* build choice value→label map */
+        const cmap = {};
+        choices.forEach(c => {
+          const val = c.name || c.$autoname || "";
+          const lbl = (c.label && c.label[0]) ? c.label[0] : val;
+          cmap[val] = lbl;
+        });
+        setChoiceMap(cmap);
 
-        {/* Header */}
-        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",
-          padding:"12px 16px",borderBottom:`1px solid ${D.bdr}`,flexShrink:0,background:D.card,
-          borderRadius:isMobile?"16px 16px 0 0":"12px 12px 0 0" }}>
-          <div>
-            <div style={{ color:"#0ea5e9",fontWeight:800,fontSize:14 }}>
-              {(autoFlags.length>0||manualNote)&&!isDismissed&&"🚩 "}
-              {sub["ANS/ANS_farm_id"]||`#${sub._id}`}
-            </div>
-            <div style={{ color:D.muted,fontSize:10 }}>
-              {vilLabel(sub["ANS/ANS_village"])} · {sub["surveyor_info/surveyor_name"]||""}
-            </div>
-          </div>
-          <div style={{ display:"flex",gap:6,alignItems:"center" }}>
-            {allowEdit && !editMode && <button onClick={()=>setEditMode(true)} className="btn"
-              style={{ borderColor:"#0ea5e9",background:"#0ea5e922",color:"#0ea5e9" }}>✏️ Edit</button>}
-            <button onClick={onClose} style={{ background:theme==="light"?"#f1f5f9":"#1e293b",
-              border:"none",color:D.text,cursor:"pointer",fontSize:16,width:28,height:28,borderRadius:8 }}>✕</button>
-          </div>
-        </div>
+        /* build village map from choices */
+        const vmap = {};
+        choices.forEach(c => {
+          if(!c["filter_value"] && !c["$filter_value"]) return;
+          const code = (c["filter_value"]||c["$filter_value"]||"").toUpperCase();
+          const lbl = (c.label && c.label[0]) ? c.label[0] : code;
+          if(code && lbl && lbl.length > 2) vmap[code] = lbl;
+        });
+        // Also treat list_name "select_village" style
+        const vilChoices = choices.filter(c =>
+          (c.list_name||"").toLowerCase().includes("village") ||
+          (c.list_name||"").toLowerCase().includes("vill")
+        );
+        vilChoices.forEach(c => {
+          const val = c.name || c.$autoname || "";
+          const lbl = (c.label && c.label[0]) ? c.label[0] : val;
+          if(val && lbl && lbl.length > 2) vmap[val.toUpperCase()] = lbl;
+          // store as lowercase too
+          if(val && lbl) vmap[val] = lbl;
+        });
+        setVilMap(prev => ({ ...VIL_FB, ...vmap }));
 
-        {/* Scrollable body */}
-        <div style={{ overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch" }}>
+        /* build ordered survey fields (only visible user-facing) */
+        const fields = survey
+          .filter(f => {
+            if(!f || f.type === "begin_group" || f.type === "end_group" ||
+               f.type === "begin_repeat" || f.type === "end_repeat" ||
+               f.type === "note" || f.type === "calculate") return false;
+            const nm = f.$autoname || f.name || "";
+            if(HIDE_KEYS.has(nm)) return false;
+            if(HIDE_PAT.test(nm)) return false;
+            if(CALC_PAT.test(nm)) return false;
+            return true;
+          })
+          .map(f => ({
+            key: f.$autoname || f.name || "",
+            label: (f.label && f.label[0]) ? f.label[0] : (f.$autoname||f.name||"").replace(/_/g," "),
+            type: f.type,
+            list_name: f.select_from_list_name || "",
+          }));
+        setSurveyFields(fields);
+        setFormDef(def);
+      }
 
-          {/* Mini map — shown whenever GPS available, in every tab */}
-          {hasGPS && (
-            <div style={{ padding:"10px 16px 0" }}>
-              <MiniMap lat={lat} lng={lng} leafletOK={leafletOK}/>
-            </div>
-          )}
+      /* submissions — paginate all */
+      let all = [], url = `/api/v2/assets/${FORM_UID}/data/?format=json&limit=100&ordering=-_submission_time`;
+      while(url){
+        const page = await kobo(url);
+        if(page?.results) all = all.concat(page.results);
+        if(page?.next){
+          // extract path from next URL
+          try { url = new URL(page.next).pathname + new URL(page.next).search; }
+          catch{ url = null; }
+        } else url = null;
+      }
+      setSubs(all);
+    } catch(e){ setErr(e.message); }
+    setLoading(false);
+  },[]);
 
-          {/* Auto-flag panel */}
-          {autoFlags.length > 0 && (
-            <div style={{ margin:"10px 16px 0",background:isDismissed?"#10b98118":"#ef444418",
-              border:`1px solid ${isDismissed?"#10b98144":"#ef444444"}`,borderRadius:8,padding:"8px 12px" }}>
-              <div style={{ fontSize:11,fontWeight:700,color:isDismissed?"#10b981":"#ef4444",marginBottom:4 }}>
-                {isDismissed ? "✓ Reviewed — Marked Normal" : "🚩 Issues Detected:"}
+  useEffect(()=>{ fetchAll(); },[fetchAll]);
+
+  /* ── village resolve helper ── */
+  const resolveVil = useCallback((sub) => {
+    const raw =
+      sub["location/select_village"] ||
+      sub["location/village"] ||
+      sub["ANS/ANS_village"] ||
+      sub["select_village"] || "";
+    const code = String(raw).trim().toUpperCase();
+    return vilMap[code] || vilMap[raw] || choiceMap[raw] ||
+      (raw.length > 3 ? raw : null);
+  },[vilMap, choiceMap]);
+
+  /* ── flag evaluation ── */
+  const evalFlags = useCallback((sub) => {
+    const flags = [];
+    const activeRules = rules.filter(r => r.active);
+    for(const r of activeRules){
+      const pat = new RegExp(r.pat, "i");
+      for(const [k, v] of Object.entries(sub)){
+        if(!pat.test(k)) continue;
+        const n = num(v);
+        if(!n) continue;
+        if(r.min !== null && n < r.min) flags.push({ rule:r, key:k, val:n, dir:"low" });
+        else if(r.max !== null && n > r.max) flags.push({ rule:r, key:k, val:n, dir:"high" });
+        break;
+      }
+    }
+    return flags;
+  },[rules]);
+
+  /* ── enriched subs ── */
+  const enriched = useMemo(()=>{
+    return subs.map(s=>{
+      const id = String(s._id||"");
+      const autoFlags = evalFlags(s);
+      const mf = manFlags[id];
+      const dismissed = !!dismissals[id];
+      const hasActiveFlag = (!dismissed && autoFlags.length>0) || mf?.active;
+      return { ...s, _autoFlags:autoFlags, _manFlag:mf, _dismissed:dismissed, _hasFlag:hasActiveFlag };
+    });
+  },[subs, evalFlags, manFlags, dismissals]);
+
+  /* ── village options for filters ── */
+  const allVillages = useMemo(()=>{
+    const set = new Set();
+    enriched.forEach(s => { const v=resolveVil(s); if(v) set.add(v); });
+    return Array.from(set).sort();
+  },[enriched, resolveVil]);
+
+  /* ── farm IDs from form choices ── */
+  const expectedFarmIDs = useMemo(()=>{
+    if(!formDef) return [];
+    const choices = formDef.content?.choices || [];
+    return choices
+      .filter(c => (c.list_name||"").toLowerCase().includes("farm"))
+      .map(c => c.name || c.$autoname || "")
+      .filter(Boolean);
+  },[formDef]);
+
+  /* ── pending computation ── */
+  const { submittedFarmIDs, pendingFarmIDs } = useMemo(()=>{
+    const submitted = new Set();
+    enriched.forEach(s=>{
+      const fid =
+        s["location/select_farm_id"] || s["ANS/ANS_farm_id"] ||
+        s["select_farm_id"] || s["farm_id"] || "";
+      if(fid) submitted.add(String(fid).trim());
+    });
+    const pending = expectedFarmIDs.filter(id=>!submitted.has(id));
+    return { submittedFarmIDs: submitted, pendingFarmIDs: pending };
+  },[enriched, expectedFarmIDs]);
+
+  /* ── visible columns for table ── */
+  const tableCols = useMemo(()=>{
+    const defaults = [
+      { key:"_idx",        label:"#" },
+      { key:"_farm",       label:"Farm ID" },
+      { key:"_village",    label:"Village" },
+      { key:"_surveyor",   label:"Surveyor" },
+      { key:"_date",       label:"Date" },
+      { key:"_acres",      label:"Acres" },
+      { key:"_yield",      label:"Yield/Ac" },
+      { key:"_dap",        label:"DAP kg" },
+      { key:"_urea_bags",  label:"Urea Bags" },
+      { key:"_urea_size",  label:"Bag Size" },
+      { key:"_flag",       label:"Flag" },
+    ];
+    if(!colVis) return defaults;
+    return defaults.map(c=>({ ...c, hidden:colVis[c.key]===false }));
+  },[colVis]);
+
+  /* ── row data extractor ── */
+  const rowData = useCallback((s)=>({
+    _idx: s._idx || "",
+    _farm: s["location/select_farm_id"]||s["ANS/ANS_farm_id"]||s["select_farm_id"]||s["farm_id"]||"-",
+    _village: resolveVil(s)||"-",
+    _surveyor: s["surveyor_info/surveyor_name"]||s["surveyor_name"]||s["ANS/ANS_surveyor"]||"-",
+    _date: s._submission_time ? new Date(s._submission_time).toLocaleDateString("en-IN") : "-",
+    _acres: s["ANS/ANS_total_acres"]||s["total_acres"]||"-",
+    _yield: s["ANS/ANS_wheat_yield_per_acre"]||s["wheat_yield_per_acre"]||s["ANS/ANS_yield_per_acre"]||"-",
+    _dap: s["ANS/ANS_dap_kg_per_acre"]||s["dap_kg_per_acre"]||"-",
+    _urea_bags: s["ANS/ANS_urea_bags"]||s["urea_bags"]||"-",
+    _urea_size: s["ANS/ANS_urea_bag_size"]||s["urea_bag_size"]||"-",
+    _flag: s._hasFlag ? "🚩" : "✅",
+  }),[resolveVil]);
+
+  /* ── toggle manual flag ── */
+  const toggleFlag = useCallback((id, reason="")=>{
+    setManFlags(prev=>{
+      const cur = prev[id];
+      const next = cur?.active
+        ? { ...prev, [id]:{ active:false, reason } }
+        : { ...prev, [id]:{ active:true, reason } };
+      return next;
+    });
+  },[]);
+
+  /* ── dismiss / undo ── */
+  const toggleDismiss = useCallback((id)=>{
+    setDismissal(prev=>({ ...prev, [id]: !prev[id] }));
+  },[]);
+
+  /* ── save edit to KoboToolbox ── */
+  const saveEdit = useCallback(async(sub)=>{
+    setSaving(true);
+    try {
+      await kobo(`/api/v2/assets/${FORM_UID}/data/${sub._id}/`, {
+        method:"PATCH",
+        body: JSON.stringify(editData),
+      });
+      setSubs(prev=>prev.map(s=>s._id===sub._id?{...s,...editData}:s));
+      setEditMode(false);
+      setModal(m=>m?{...m,...editData}:m);
+    } catch(e){ alert("Save failed: "+e.message); }
+    setSaving(false);
+  },[editData]);
+
+  /* ─────────────────────────────────────────────────────── */
+  /* ── FORM POPUP DISPLAY ── */
+  const displayFields = useCallback((sub)=>{
+    if(surveyFields.length > 0){
+      // use ordered survey fields
+      return surveyFields.map(f=>{
+        const keys = [
+          `ANS/${f.key}`, `ANS/ANS_${f.key}`, `location/${f.key}`,
+          `surveyor_info/${f.key}`, `date_time/${f.key}`, f.key
+        ];
+        let val = "";
+        for(const k of keys){
+          if(sub[k] !== undefined && sub[k] !== null && sub[k] !== ""){
+            val = sub[k]; break;
+          }
+        }
+        if(val === "") return null;
+        // resolve choice label
+        const display = choiceMap[String(val)] || String(val);
+        return { label: f.label, val: display };
+      }).filter(Boolean);
+    }
+    // fallback: show all non-internal keys
+    return Object.entries(sub)
+      .filter(([k,v])=>{
+        if(HIDE_KEYS.has(k)) return false;
+        if(HIDE_PAT.test(k)) return false;
+        if(CALC_PAT.test(k)) return false;
+        if(v===null||v===undefined||v==="") return false;
+        if(typeof v==="object") return false;
+        return true;
+      })
+      .map(([k,v])=>({
+        label: k.replace(/^ANS\/ANS_|^ANS\/|^location\/|^surveyor_info\/|^date_time\//,"").replace(/_/g," "),
+        val: choiceMap[String(v)]||String(v),
+      }));
+  },[surveyFields, choiceMap]);
+
+  /* ─────────────────────────────────────────────────────── */
+  /* ── MINI MAP COMPONENT ── */
+  function MiniMap({ sub }) {
+    const ref = useRef(null);
+    const instRef = useRef(null);
+    const geo = sub._geolocation;
+    const lat = Array.isArray(geo) ? geo[0] : null;
+    const lng = Array.isArray(geo) ? geo[1] : null;
+    const valid = lat && lng && Math.abs(lat) > 0.001 && Math.abs(lng) > 0.001;
+
+    useEffect(()=>{
+      if(!leafletOK || !valid || !ref.current || instRef.current) return;
+      const LL = window.L;
+      const m = LL.map(ref.current,{ zoomControl:false, attributionControl:false });
+      m.setView([lat,lng],15);
+      LL.tileLayer(satellite?SAT:STR,{ maxZoom:19 }).addTo(m);
+      LL.circleMarker([lat,lng],{ radius:8, color:"#ef4444", fillColor:"#ef4444", fillOpacity:0.8 }).addTo(m);
+      instRef.current = m;
+      setTimeout(()=>m.invalidateSize(),200);
+    },[leafletOK, valid]);
+
+    if(!valid) return <div style={{height:140,background:D.hover,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",color:D.muted,fontSize:12}}>No GPS data</div>;
+    return <div ref={ref} style={{height:140,borderRadius:8,overflow:"hidden",marginTop:8}} />;
+  }
+
+  /* ─────────────────────────────────────────────────────── */
+  /* ── FORM MODAL ── */
+  function FormModal({ sub, onClose }) {
+    const [editLocal, setEditLocal] = useState({});
+    const [localEdit, setLocalEdit] = useState(false);
+    const [noteVal, setNoteVal] = useState(notes[String(sub._id)]||"");
+    const id = String(sub._id);
+    const fields = displayFields(sub);
+
+    const saveNote = (v) => {
+      setNoteVal(v);
+      setNotes(prev=>({ ...prev, [id]: v }));
+    };
+
+    const commitEdit = async()=>{
+      setEditData(editLocal);
+      await saveEdit({ ...sub, ...editLocal });
+    };
+
+    return (
+      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:12}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:D.card,borderRadius:16,width:"100%",maxWidth:540,maxHeight:"90vh",overflowY:"auto",display:"flex",flexDirection:"column"}}>
+          {/* header */}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"16px 20px",borderBottom:`1px solid ${D.bdr}`,position:"sticky",top:0,background:D.card,zIndex:1}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:15,color:D.text}}>
+                {sub._hasFlag ? "🚩" : "✅"} Farm {rowData(sub)._farm}
               </div>
-              {autoFlags.map((f,i) => <div key={i} style={{ fontSize:11,color:isDismissed?"#10b981":"#ef4444" }}>• {f.label}: <b>{f.issue}</b></div>)}
-              {/* Always show dismiss reason if it exists (whether dismissed or not) */}
-              {dismissDrafts[sid] && (
-                <div style={{ fontSize:11,color:isDismissed?"#10b981":"#6b7280",marginTop:4,fontStyle:"italic" }}>
-                  {isDismissed ? "Reason saved: " : "Draft reason: "}{dismissDrafts[sid]}
+              <div style={{fontSize:11,color:D.muted}}>{resolveVil(sub)||""} • {rowData(sub)._date}</div>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>setLocalEdit(!localEdit)} style={{background:localEdit?D.accent+"22":"transparent",border:`1px solid ${localEdit?D.accent:D.bdr}`,color:localEdit?D.accent:D.muted,borderRadius:8,padding:"4px 12px",fontSize:12,cursor:"pointer"}}>
+                {localEdit?"Cancel Edit":"✏️ Edit"}
+              </button>
+              <button onClick={onClose} style={{background:"transparent",border:"none",fontSize:20,cursor:"pointer",color:D.muted,lineHeight:1}}>✕</button>
+            </div>
+          </div>
+          {/* mini map */}
+          <div style={{padding:"12px 20px 0"}}>
+            <MiniMap sub={sub} />
+          </div>
+          {/* flags */}
+          {sub._autoFlags?.length > 0 && (
+            <div style={{margin:"12px 20px 0",padding:"10px 14px",background:D.danger+"15",borderRadius:10,border:`1px solid ${D.danger}33`}}>
+              <div style={{fontSize:11,fontWeight:700,color:D.danger,marginBottom:4}}>AUTO FLAGS</div>
+              {sub._autoFlags.map((f,i)=>(
+                <div key={i} style={{fontSize:12,color:D.danger}}>
+                  {f.rule.label}: {f.val} {f.rule.unit} ({f.dir === "low" ? "< "+f.rule.min : "> "+f.rule.max})
                 </div>
-              )}
+              ))}
             </div>
           )}
-
-          {/* Manual flag note — always visible when set */}
-          {manualNote && (
-            <div style={{ margin:"8px 16px 0",background:"#f59e0b18",border:"1px solid #f59e0b44",borderRadius:8,padding:"8px 12px" }}>
-              <div style={{ fontSize:11,color:"#f59e0b",fontWeight:700 }}>👁 Your note: {manualNote}</div>
-            </div>
-          )}
-
-          {/* Action bar */}
-          <div style={{ padding:"10px 16px",display:"flex",gap:6,flexWrap:"wrap",
-            borderBottom:`1px solid ${D.bdr}`,borderTop:`1px solid ${D.bdr}`,marginTop:10 }}>
-
-            {/* Dismiss / Undo row */}
-            {autoFlags.length > 0 && (isDismissed ? (
-              <button onClick={() => onUndismiss(sid)} className="btn"
-                style={{ borderColor:"#f59e0b",background:"#f59e0b22",color:"#f59e0b" }}>↩ Undo Review</button>
-            ) : (
-              <div style={{ display:"flex",gap:4,flex:1,flexWrap:"wrap",alignItems:"center",minWidth:"100%" }}>
-                <input value={dismissDrafts[sid]||""} onChange={e => onDismissDraftChange(sid, e.target.value)}
-                  placeholder="Dismiss reason (optional — auto-saved as you type)"
-                  className="inp" style={{ flex:1,minWidth:120,padding:"5px 10px",fontSize:11 }}/>
-                <button onClick={() => onDismiss(sid)} className="btn"
-                  style={{ borderColor:"#10b981",background:"#10b98122",color:"#10b981",flexShrink:0 }}>✓ Mark Normal</button>
-              </div>
-            ))}
-
-            {/* Manual flag row */}
-            {manualNote ? (
-              <button onClick={() => onRemoveFlag(sid)} className="btn"
-                style={{ borderColor:"#10b981",background:"#10b98122",color:"#10b981" }}>✓ Remove My Flag</button>
-            ) : (
-              <div style={{ display:"flex",gap:4,flex:1,flexWrap:"wrap",alignItems:"center",minWidth:"100%" }}>
-                <input value={flagDrafts[sid]||""} onChange={e => onFlagDraftChange(sid, e.target.value)}
-                  placeholder="Flag note (optional — auto-saved as you type)"
-                  className="inp" style={{ flex:1,minWidth:120,padding:"5px 10px",fontSize:11 }}/>
-                <button onClick={() => onAddFlag(sid, flagDrafts[sid]||"")} className="btn"
-                  style={{ borderColor:"#ef4444",background:"#ef444422",color:"#ef4444",flexShrink:0 }}>🚩 Flag</button>
-              </div>
-            )}
+          {/* note */}
+          <div style={{padding:"10px 20px 0"}}>
+            <textarea
+              value={noteVal}
+              onChange={e=>saveNote(e.target.value)}
+              placeholder="Add a note / observation..."
+              rows={2}
+              style={{width:"100%",boxSizing:"border-box",background:D.hover,border:`1px solid ${D.bdr}`,borderRadius:8,padding:"8px 10px",fontSize:12,color:D.text,resize:"vertical",outline:"none"}}
+            />
           </div>
-
-          {/* Edit save bar */}
-          {editMode && (
-            <div style={{ padding:"8px 16px",borderBottom:`1px solid ${D.bdr}`,display:"flex",
-              gap:6,alignItems:"center",flexWrap:"wrap",background:theme==="light"?"#eff6ff":"#0a1628" }}>
-              <span style={{ fontSize:11,color:"#0ea5e9",fontWeight:700,flex:1 }}>✏️ Edit mode — saves directly to KoboToolbox</span>
-              {Object.keys(editData).length > 0 && (
-                <button onClick={handleSave} disabled={saving} className="btn"
-                  style={{ borderColor:"#10b981",background:"#10b98122",color:"#10b981" }}>
-                  {saving?"Saving…":"💾 Save"}
-                </button>
-              )}
-              <button onClick={() => { setEditMode(false); setEditData({}); }} className="btn"
-                style={{ borderColor:D.bdr,color:D.muted }}>Cancel</button>
-              {saveMsg && <span style={{ fontSize:11,fontWeight:700,color:saveMsg.startsWith("✅")?"#10b981":"#ef4444" }}>{saveMsg}</span>}
-            </div>
-          )}
-
-          {/* Form fields — clean, ordered, exactly as user filled */}
-          <div style={{ padding:"10px 16px 20px" }}>
-            {fields.length === 0 && (
-              <div style={{ color:D.muted,textAlign:"center",padding:24,fontSize:12 }}>No form data available</div>
-            )}
-            {fields.map(({ key, label, value }) => (
-              <div key={key} style={{ display:"flex",gap:10,padding:"7px 0",
-                borderBottom:`1px solid ${D.bdr}22`,alignItems:"flex-start" }}>
-                <span style={{ color:D.muted,fontSize:10,width:130,flexShrink:0,
-                  textTransform:"capitalize",lineHeight:1.4,wordBreak:"break-word",paddingTop:1 }}>
-                  {label}
-                </span>
-                {editMode ? (
-                  <input value={editData[key]!==undefined ? editData[key] : value}
-                    onChange={e => setEditData(p => ({...p,[key]:e.target.value}))}
-                    style={{ flex:1,fontSize:12,padding:"3px 6px",background:D.inp,
-                      border:"1px solid #0ea5e944",borderRadius:4,color:D.text }}/>
+          {/* dismiss button */}
+          <div style={{padding:"6px 20px 0",display:"flex",gap:8}}>
+            <button
+              onClick={()=>toggleDismiss(id)}
+              style={{fontSize:11,padding:"4px 12px",borderRadius:8,border:`1px solid ${sub._dismissed?D.success:D.warn}`,background:"transparent",color:sub._dismissed?D.success:D.warn,cursor:"pointer"}}
+            >
+              {sub._dismissed ? "↩ Undo Dismiss" : "✓ Mark Normal"}
+            </button>
+            <button
+              onClick={()=>toggleFlag(id, noteVal)}
+              style={{fontSize:11,padding:"4px 12px",borderRadius:8,border:`1px solid ${sub._manFlag?.active?D.danger:D.bdr}`,background:"transparent",color:sub._manFlag?.active?D.danger:D.muted,cursor:"pointer"}}
+            >
+              {sub._manFlag?.active ? "🚩 Remove Flag" : "🚩 Manual Flag"}
+            </button>
+          </div>
+          {/* fields */}
+          <div style={{padding:"12px 20px 16px"}}>
+            {fields.map((f,i)=>(
+              <div key={i} style={{display:"flex",gap:12,padding:"7px 0",borderBottom:`1px solid ${D.bdr}22`,alignItems:"flex-start"}}>
+                <span style={{color:D.muted,fontSize:11,width:170,flexShrink:0,paddingTop:1,textTransform:"capitalize"}}>{f.label}</span>
+                {localEdit ? (
+                  <input
+                    defaultValue={f.val}
+                    onChange={e=>{
+                      // find the actual key
+                      const possibleKeys = [`ANS/ANS_${f.label.replace(/ /g,"_").toLowerCase()}`, f.label.replace(/ /g,"_").toLowerCase()];
+                      setEditLocal(prev=>({ ...prev, [possibleKeys[0]]: e.target.value }));
+                    }}
+                    style={{flex:1,background:D.hover,border:`1px solid ${D.bdr}`,borderRadius:6,padding:"3px 8px",fontSize:12,color:D.text,outline:"none"}}
+                  />
                 ) : (
-                  <span style={{ color:D.text,fontSize:12,fontWeight:500,flex:1,
-                    wordBreak:"break-word",lineHeight:1.5 }}>{value}</span>
+                  <span style={{color:D.text,fontSize:13,fontWeight:500,flex:1,wordBreak:"break-word"}}>{f.val}</span>
                 )}
               </div>
             ))}
+            {localEdit && (
+              <button
+                onClick={commitEdit}
+                disabled={saving}
+                style={{marginTop:12,background:D.accent,color:"#fff",border:"none",borderRadius:10,padding:"8px 20px",fontSize:13,cursor:"pointer",fontWeight:600,width:"100%"}}
+              >
+                {saving?"Saving…":"💾 Save to KoboToolbox"}
+              </button>
+            )}
           </div>
         </div>
       </div>
-    </div>
-  );
-}
+    );
+  }
 
-// ─── Small reusable components ──────────────────────────────────────────────
-function HBar({data,xKey,yKey,color="#0ea5e9",theme,maxItems=20}){if(!data?.length)return null;const rows=data.slice(0,maxItems);const max=Math.max(...rows.map(d=>num(d[yKey])),1);const tc=theme==="light"?"#374151":"#e2e8f0";const bg=theme==="light"?"#e5e7eb":"#1e293b";const lw=Math.min(Math.max(Math.max(...rows.map(d=>String(d[xKey]).length))*7+8,100),180);return(<div style={{display:"flex",flexDirection:"column",gap:6}}>{rows.map((d,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:10}}><span style={{width:lw,fontSize:12,color:tc,flexShrink:0,textAlign:"right",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={String(d[xKey])}>{d[xKey]}</span><div style={{flex:1,background:bg,borderRadius:4,height:26,overflow:"hidden",position:"relative",minWidth:60}}><div style={{width:`${(num(d[yKey])/max)*100}%`,height:"100%",background:typeof color==="function"?color(i):color,borderRadius:4,transition:"width .5s"}}/><span style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",fontSize:12,fontWeight:700,color:theme==="light"?"#1e293b":"#f1f5f9",textShadow:theme==="light"?"0 0 3px #fff":"0 0 4px #000"}}>{typeof d[yKey]==="number"?fmt(d[yKey],1):d[yKey]}</span></div></div>))}</div>);}
-function PieC({data,size=150}){if(!data?.length)return null;const total=data.reduce((s,d)=>s+d.value,0);if(!total)return null;let angle=-Math.PI/2;const r=size/2-6,cx=size/2,cy=size/2;const sl=data.map((d,i)=>{const sw=(d.value/total)*2*Math.PI;const x1=cx+r*Math.cos(angle),y1=cy+r*Math.sin(angle);angle+=sw;const x2=cx+r*Math.cos(angle),y2=cy+r*Math.sin(angle);return{path:`M${cx},${cy} L${x1},${y1} A${r},${r} 0 ${sw>Math.PI?1:0},1 ${x2},${y2} Z`,color:COLORS[i%COLORS.length],label:d.label,value:d.value};});return(<div style={{display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}}><svg width={size} height={size} style={{flexShrink:0}}>{sl.map((s,i)=><path key={i} d={s.path} fill={s.color} opacity="0.9"/>)}</svg><div style={{display:"flex",flexDirection:"column",gap:5,flex:1,minWidth:110}}>{sl.map((s,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:6,fontSize:12}}><div style={{width:10,height:10,borderRadius:2,background:s.color,flexShrink:0}}/><span>{s.label}: <b>{s.value}</b></span></div>))}</div></div>);}
+  /* ─────────────────────────────────────────────────────── */
+  /* ── MAP TAB ── */
+  function MapTab() {
+    const [showList, setShowList] = useState(false);
+    const [listSub, setListSub] = useState(null);
+    const filtered = useMemo(()=>{
+      if(!mapSearch.trim()) return enriched;
+      const q = mapSearch.toLowerCase();
+      return enriched.filter(s=>
+        resolveVil(s)?.toLowerCase().includes(q) ||
+        (s["location/select_farm_id"]||"").toLowerCase().includes(q) ||
+        (s["surveyor_info/surveyor_name"]||"").toLowerCase().includes(q)
+      );
+    },[mapSearch]);
 
-function LeafletMap({subs,selId,onSel,layer,visible,rules}){const ref=useRef(null),mref=useRef(null),markers=useRef([]),tref=useRef(null);useEffect(()=>{if(!ref.current||mref.current)return;const L=window.L;if(!L)return;mref.current=L.map(ref.current,{zoomControl:true,tap:true}).setView([30.38,76.38],11);tref.current=L.tileLayer(SAT_URL,{attribution:"© Esri",maxZoom:19}).addTo(mref.current);setTimeout(()=>{if(mref.current)mref.current.invalidateSize();},300);},[]);useEffect(()=>{if(visible&&mref.current)setTimeout(()=>mref.current.invalidateSize(),200);},[visible]);useEffect(()=>{const L=window.L;if(!L||!mref.current||!tref.current)return;tref.current.remove();tref.current=L.tileLayer(layer==="satellite"?SAT_URL:STR_URL,{attribution:layer==="satellite"?"© Esri":"© OSM",maxZoom:19}).addTo(mref.current);},[layer]);useEffect(()=>{const L=window.L;if(!L||!mref.current)return;markers.current.forEach(m=>m.remove());markers.current=[];subs.filter(s=>s._geolocation?.length>=2&&s._geolocation[0]).forEach(s=>{const[lat,lng]=s._geolocation,isSel=s._id===selId;const fl=getFlags(s,rules);const col=isSel?"#f59e0b":fl.length?"#ef4444":"#0ea5e9";const ico=L.divIcon({className:"",html:`<div style="width:${isSel?20:12}px;height:${isSel?20:12}px;border-radius:50%;background:${col};border:2px solid #fff;box-shadow:0 2px 8px #0006"></div>`,iconSize:[isSel?20:12,isSel?20:12],iconAnchor:[isSel?10:6,isSel?10:6]});const m=L.marker([lat,lng],{icon:ico}).addTo(mref.current);m.on("click",()=>onSel(s._id===selId?null:s._id));markers.current.push(m);});if(selId){const sel=subs.find(s=>s._id===selId);if(sel?._geolocation)mref.current.flyTo(sel._geolocation,14,{duration:1});}},[subs,selId,rules]);return<div ref={ref} style={{height:"100%",width:"100%",minHeight:300}}/>;}
+    useEffect(()=>{
+      if(!leafletOK || !mapRef.current) return;
+      const LL = window.L;
+      if(!mapInst.current){
+        mapInst.current = LL.map(mapRef.current,{ zoomControl:true });
+        mapInst.current.setView([26.5, 80.5], 9);
+      }
+      // clear markers
+      markersRef.current.forEach(m=>m.remove());
+      markersRef.current = [];
+      // update tiles
+      mapInst.current.eachLayer(l=>{ if(l._url) mapInst.current.removeLayer(l); });
+      LL.tileLayer(satellite?SAT:STR,{ maxZoom:20, attribution:"" }).addTo(mapInst.current);
+      // add markers
+      filtered.forEach(s=>{
+        const geo=s._geolocation;
+        if(!Array.isArray(geo)||!geo[0]||!geo[1]) return;
+        const [lat,lng]=[geo[0],geo[1]];
+        if(Math.abs(lat)<0.001&&Math.abs(lng)<0.001) return;
+        const color = s._hasFlag ? "#ef4444" : "#10b981";
+        const m = LL.circleMarker([lat,lng],{ radius:7, color, fillColor:color, fillOpacity:0.8, weight:2 });
+        const rd = rowData(s);
+        m.bindPopup(`<b>Farm ${rd._farm}</b><br>${rd._village}<br>${rd._surveyor}<br>${rd._date}${s._hasFlag?"<br>🚩 Flagged":""}`);
+        m.addTo(mapInst.current);
+        markersRef.current.push(m);
+      });
+      setTimeout(()=>mapInst.current.invalidateSize(),100);
+    },[leafletOK, filtered, satellite]);
 
-function DlBtn({rows,fn,theme}){const[o,sO]=useState(false);const ref=useRef(null);useEffect(()=>{const h=e=>{if(ref.current&&!ref.current.contains(e.target))sO(false);};document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);},[]);const dlCSV=()=>{if(!rows.length)return;const k=Object.keys(rows[0]);const c=[k.join(","),...rows.map(r=>k.map(col=>`"${String(r[col]??"").replace(/"/g,'""')}"`).join(","))].join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([c],{type:"text/csv"}));a.download=(fn||"data")+".csv";a.click();sO(false);};const dlX=()=>{const X=window.XLSX;if(!X)return;const ws=X.utils.json_to_sheet(rows);const wb=X.utils.book_new();X.utils.book_append_sheet(wb,ws,"Data");X.writeFile(wb,(fn||"data")+".xlsx");sO(false);};const bg=theme==="light"?"#fff":"#0f172a",bd=theme==="light"?"#e2e8f0":"#1e293b",tc=theme==="light"?"#1e293b":"#e2e8f0";return(<div ref={ref} style={{position:"relative"}}><button onClick={()=>sO(x=>!x)} style={{background:theme==="light"?"#eff6ff":"#0f172a",border:"1px solid #0ea5e944",color:"#0ea5e9",padding:"5px 10px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:600}}>⬇ {rows.length}</button>{o&&<div style={{position:"absolute",right:0,top:"calc(100% + 4px)",background:bg,border:`1px solid ${bd}`,borderRadius:8,boxShadow:"0 4px 20px #0004",zIndex:999,minWidth:100}}>{[["CSV",dlCSV],["XLSX",dlX]].map(([l,h])=><button key={l} onClick={h} style={{width:"100%",background:"none",border:"none",padding:"8px 14px",cursor:"pointer",color:tc,fontSize:12,fontWeight:600,borderBottom:`1px solid ${bd}`,textAlign:"left"}}>{l}</button>)}</div>}</div>);}
-function Stat({label,value,unit="",color,icon,theme}){const bg=theme==="light"?"#fff":"#0f172a",lc=theme==="light"?"#6b7280":"#64748b";return(<div style={{background:bg,border:`1px solid ${color}33`,borderRadius:10,padding:"12px 16px",display:"flex",flexDirection:"column",gap:4,flex:1,minWidth:110}}><span style={{fontSize:10,color:lc,letterSpacing:1,textTransform:"uppercase"}}>{icon} {label}</span><span style={{fontSize:22,fontWeight:700,color,fontFamily:"monospace"}}>{value}<span style={{fontSize:11,color:lc,marginLeft:3}}>{unit}</span></span></div>);}
-function Card({children,title,theme,extra,noPad}){const bg=theme==="light"?"#fff":"#0f172a",bor=theme==="light"?"#e2e8f0":"#1e293b",tc=theme==="light"?"#6b7280":"#94a3b8";return(<div style={{background:bg,border:`1px solid ${bor}`,borderRadius:10,padding:noPad?0:20,overflow:"hidden"}}>{(title||extra)&&<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:title?14:0,padding:noPad?"14px 18px 10px":"0",flexWrap:"wrap",gap:8}}>{title&&<h3 style={{fontSize:12,color:tc,margin:0,textTransform:"uppercase",letterSpacing:1,fontWeight:700}}>{title}</h3>}{extra}</div>}<div style={{padding:noPad?"0 18px 18px":0}}>{children}</div></div>);}
-function AddRule({fields,onAdd,D}){const[f,sF]=useState("");const[l,sL]=useState("");const[mn,sMn]=useState("");const[mx,sMx]=useState("");const go=()=>{if(!f)return;onAdd({field:f,label:l||f.split("/").pop().replace(/_/g," "),min:mn===""?null:Number(mn),max:mx===""?null:Number(mx),enabled:true});sF("");sL("");sMn("");sMx("");};return(<div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"flex-end"}}><div style={{flex:2,minWidth:160}}><div style={{fontSize:10,color:D.muted,marginBottom:2}}>Field</div><select value={f} onChange={e=>{sF(e.target.value);if(!l)sL(e.target.value.split("/").pop().replace(/_/g," "));}} style={{width:"100%",padding:"5px 8px",fontSize:11,background:D.inp,border:`1px solid ${D.bdr}`,borderRadius:6,color:D.text}}><option value="">Select…</option>{fields.map(x=><option key={x} value={x}>{x}</option>)}</select></div><div style={{flex:1,minWidth:90}}><div style={{fontSize:10,color:D.muted,marginBottom:2}}>Label</div><input value={l} onChange={e=>sL(e.target.value)} style={{width:"100%",padding:"5px 8px",fontSize:11,background:D.inp,border:`1px solid ${D.bdr}`,borderRadius:6,color:D.text}} placeholder="Display name"/></div><div style={{width:64}}><div style={{fontSize:10,color:D.muted,marginBottom:2}}>Min</div><input type="number" value={mn} onChange={e=>sMn(e.target.value)} style={{width:"100%",padding:"5px 6px",fontSize:11,background:D.inp,border:`1px solid ${D.bdr}`,borderRadius:4,color:D.text}} placeholder="—"/></div><div style={{width:64}}><div style={{fontSize:10,color:D.muted,marginBottom:2}}>Max</div><input type="number" value={mx} onChange={e=>sMx(e.target.value)} style={{width:"100%",padding:"5px 6px",fontSize:11,background:D.inp,border:`1px solid ${D.bdr}`,borderRadius:4,color:D.text}} placeholder="—"/></div><button onClick={go} disabled={!f} style={{padding:"5px 14px",borderRadius:6,border:"1px solid #10b981",background:"#10b98122",color:"#10b981",cursor:f?"pointer":"not-allowed",fontSize:11,fontWeight:700,opacity:f?1:.5}}>+ Add</button></div>);}
+    return (
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+          <input value={mapSearch} onChange={e=>setMapSearch(e.target.value)} placeholder="Search village / farm / surveyor…"
+            style={{flex:"1 1 200px",minWidth:140,padding:"8px 12px",border:`1px solid ${D.bdr}`,borderRadius:10,background:D.card,color:D.text,fontSize:13,outline:"none"}} />
+          <button onClick={()=>setSatellite(!satellite)} style={{padding:"8px 14px",border:`1px solid ${D.bdr}`,borderRadius:10,background:D.card,color:D.text,cursor:"pointer",fontSize:12}}>
+            {satellite?"🗺 Street":"🛰 Satellite"}
+          </button>
+          <button onClick={()=>setShowList(!showList)} style={{padding:"8px 14px",border:`1px solid ${D.bdr}`,borderRadius:10,background:D.card,color:D.text,cursor:"pointer",fontSize:12}}>
+            ☰ List ({filtered.length})
+          </button>
+        </div>
+        <div style={{position:"relative",borderRadius:14,overflow:"hidden",height:480,border:`1px solid ${D.bdr}`}}>
+          <div ref={mapRef} style={{height:"100%",width:"100%"}} />
+          {/* mobile list drawer */}
+          {showList && (
+            <div style={{position:"absolute",top:0,right:0,bottom:0,width:"min(280px,85vw)",background:D.card,zIndex:500,overflowY:"auto",borderLeft:`1px solid ${D.bdr}`,WebkitOverflowScrolling:"touch"}}>
+              <div style={{padding:"10px 14px",borderBottom:`1px solid ${D.bdr}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontWeight:600,fontSize:13,color:D.text}}>Submissions</span>
+                <button onClick={()=>setShowList(false)} style={{background:"none",border:"none",fontSize:18,cursor:"pointer",color:D.muted}}>✕</button>
+              </div>
+              {filtered.map(s=>{
+                const rd=rowData(s);
+                return (
+                  <div key={s._id}
+                    onTouchEnd={()=>{ setModal(s); setShowList(false); }}
+                    onClick={()=>{ setModal(s); setShowList(false); }}
+                    style={{padding:"10px 14px",borderBottom:`1px solid ${D.bdr}22`,cursor:"pointer",minHeight:48,display:"flex",flexDirection:"column",gap:2,WebkitTapHighlightColor:"rgba(0,0,0,0.1)"}}>
+                    <div style={{fontSize:12,fontWeight:600,color:D.text}}>Farm {rd._farm} {s._hasFlag?"🚩":""}</div>
+                    <div style={{fontSize:11,color:D.muted}}>{rd._village} • {rd._date}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <div style={{fontSize:11,color:D.muted,textAlign:"center"}}>
+          🟢 Clean &nbsp;🔴 Flagged &nbsp;• {filtered.length} shown
+        </div>
+      </div>
+    );
+  }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  MAIN APP
-// ════════════════════════════════════════════════════════════════════════════
-export default function App() {
-  const [subs, setSubs]               = useState([]);
-  const [formChoices, setFC]          = useState([]);
-  const [allChoices, setAC]           = useState([]);
-  const [choiceMap, setCM]            = useState({});
-  const [formFields, setFF]           = useState([]);
-  const [loading, setLoading]         = useState(true);
-  const [error, setError]             = useState(null);
-  const [tab, setTab]                 = useState("overview");
-  const [selId, setSelId]             = useState(null);
-  const [search, setSearch]           = useState("");
-  const [visCols, setVisCols]         = useState(null);
-  const [showColPick, setShowColPick] = useState(false);
-  const [selRows, setSelRows]         = useState([]);
-  const [leafletOK, setLeafletOK]     = useState(false);
-  const [theme, setTheme]             = useState("light");
-  const [pendFil, setPendFil]         = useState("all");
-  const [pendVil, setPendVil]         = useState("all");
-  const [pendSort, setPendSort]       = useState("newest");
-  const [mapLayer, setMapLayer]       = useState("satellite");
-  const [openSub, setOpenSub]         = useState(null); // any expanded submission
-  const [mapSearch, setMapSearch]     = useState("");
-  const [dupOnly, setDupOnly]         = useState(false);
-  const [mobile, setMobile]           = useState(typeof window!=="undefined"&&window.innerWidth<640);
-  const [flagSearch, setFlagSearch]   = useState("");
-  const [pendSearch, setPendSearch]   = useState("");
-  const [tblFilter, setTblFilter]     = useState("all");
-  const [showMapList, setShowMapList] = useState(false);
-  const [showDismissed, setShowDismissed] = useState(false);
-  const [flagRules, setFlagRules]     = useState(() => ls("kobo_rules", DEFAULT_FLAG_RULES));
+  /* ─────────────────────────────────────────────────────── */
+  /* ── OVERVIEW TAB ── */
+  function OverviewTab() {
+    const total = enriched.length;
+    const flagged = enriched.filter(s=>s._hasFlag).length;
+    const clean = total - flagged;
+    const pending = expectedFarmIDs.length > 0 ? pendingFarmIDs.length : "—";
+    const done = total;
 
-  // Persistent per-submission notes — survive tab switches + page refresh
-  const [dismissed,  setDismissed]  = useState(() => ls("kobo_dismissed", []));
-  const [manualFlags,setManFlags]   = useState(() => ls("kobo_manual_flags", {}));
-  const [flagDrafts, setFlagDrafts] = useState(() => ls("kobo_flag_drafts", {}));
-  const [disDrafts,  setDisDrafts]  = useState(() => ls("kobo_dis_drafts",  {}));
+    const bySurveyor = useMemo(()=>{
+      const m={};
+      enriched.forEach(s=>{
+        const sv=s["surveyor_info/surveyor_name"]||s["surveyor_name"]||"Unknown";
+        m[sv]=(m[sv]||0)+1;
+      });
+      return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,10);
+    },[enriched]);
 
-  const setFlagDraft = (id, v) => { const u={...flagDrafts,[id]:v}; setFlagDrafts(u); sw("kobo_flag_drafts",u); };
-  const setDisDraft  = (id, v) => { const u={...disDrafts, [id]:v}; setDisDrafts(u);  sw("kobo_dis_drafts",  u); };
+    const byVil = useMemo(()=>{
+      const m={};
+      enriched.forEach(s=>{ const v=resolveVil(s)||"Unknown"; m[v]=(m[v]||0)+1; });
+      return Object.entries(m).sort((a,b)=>b[1]-a[1]);
+    },[enriched, resolveVil]);
 
-  const doDismiss = (id) => {
-    const u = [...dismissed, id]; setDismissed(u); sw("kobo_dismissed", u);
-    // keep dismiss draft as the stored reason (don't clear it)
-  };
-  const doUndismiss = (id) => { const u=dismissed.filter(x=>x!==id); setDismissed(u); sw("kobo_dismissed",u); };
-  const doAddFlag   = (id, note) => {
-    const u = {...manualFlags,[id]:note||"Flagged"}; setManFlags(u); sw("kobo_manual_flags",u);
-    // clear flag draft after it's been committed
-    const d={...flagDrafts}; delete d[id]; setFlagDrafts(d); sw("kobo_flag_drafts",d);
-  };
-  const doRemoveFlag = (id) => { const u={...manualFlags}; delete u[id]; setManFlags(u); sw("kobo_manual_flags",u); };
+    const cards = [
+      { label:"Total Submissions", val:total, color:D.accent },
+      { label:"Done / Collected",  val:done,  color:D.success },
+      { label:"Pending",           val:pending, color:D.warn },
+      { label:"🚩 Flagged",        val:flagged, color:D.danger },
+      { label:"✅ Clean",          val:clean,  color:D.success },
+    ];
 
-  useEffect(()=>{ const fn=()=>setMobile(window.innerWidth<640); window.addEventListener("resize",fn); return()=>window.removeEventListener("resize",fn); },[]);
-  useEffect(()=>{ document.documentElement.style.cssText="overflow-y:scroll;overflow-x:hidden;height:auto;"; document.body.style.cssText="overflow-y:scroll;overflow-x:hidden;height:auto;margin:0;padding:0;"; const r=document.getElementById("root"); if(r)r.style.cssText="width:100%;height:auto;overflow:visible;"; },[]);
-  useEffect(()=>{
-    if(!window.L){const l=document.createElement("link");l.rel="stylesheet";l.href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";document.head.appendChild(l);const s=document.createElement("script");s.src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";s.onload=()=>setLeafletOK(true);document.head.appendChild(s);}else setLeafletOK(true);
-    if(!window.XLSX){const s=document.createElement("script");s.src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";document.head.appendChild(s);}
-  },[]);
-
-  const fetchData = useCallback(async () => {
-    setLoading(true); setError(null);
-    try {
-      const mr = await fetch(`/api/kobo?path=${encodeURIComponent(`/api/v2/assets/${FORM_UID}/?format=json`)}`,{headers:HEADERS,cache:"no-store"});
-      if(!mr.ok) throw new Error(`Meta ${mr.status}`);
-      const meta = await mr.json();
-      const ac = meta?.content?.choices||[];
-      const sf = meta?.content?.survey||[];
-      setFF(sf);
-      const lm={}; ac.forEach(c=>{if(c.name){const l=Array.isArray(c.label)?c.label[0]:c.label; if(l)lm[c.name]=l;}}); setCM(lm);
-      setAC(ac); setFC(ac.filter(c=>String(c.name||"").match(/PLT_\d+/)));
-      let all=[], url=`/api/kobo?path=${encodeURIComponent(`/api/v2/assets/${FORM_UID}/data/?format=json&limit=300&start=0&ordering=-_submission_time`)}`;
-      while(url){ const r=await fetch(url,{headers:HEADERS,cache:"no-store"}); if(!r.ok)throw new Error(`Data ${r.status}`); const j=await r.json(); all=[...all,...(j.results||[])]; url=j.next?`/api/kobo?path=${encodeURIComponent(j.next.replace("https://kf.kobotoolbox.org",""))}`:null; }
-      setSubs(all);
-      if(all.length&&!visCols){ const want=["_id","ANS/ANS_farm_id","ANS/ANS_village","surveyor_info/surveyor_name","ANS/ANS_total_acres","ANS/ANS_wheat_yield_per_acre","date_time/survey_date"]; setVisCols(want.filter(c=>c in all[0])); }
-    } catch(e){ setError(e.message); } finally{ setLoading(false); }
-  },[]);
-  useEffect(()=>{ fetchData(); },[fetchData]);
-
-  const fieldMap = useMemo(()=>buildFieldMap(formFields),[formFields]);
-
-  // Village name resolution
-  const p2v = useMemo(()=>{
-    const m={};
-    subs.forEach(r=>{const fid=r["ANS/ANS_farm_id"]||r["location/select_farm_id"]||"";const p=fid.split("_")[0];const v=r["ANS/ANS_village"];if(p&&v){const res=choiceMap[v]||v;if(res.length>2)m[p]=res;}});
-    allChoices.forEach(c=>{const n=c.name||"";const l=Array.isArray(c.label)?c.label[0]:c.label;if(l&&n&&!n.match(/PLT_\d+/)&&n.length<=4&&!m[n]&&l.length>2){m[n]=l;m[n.toUpperCase()]=l;}});
-    formChoices.forEach(c=>{const p=(c.name||"").split("_")[0];const fv=c.filter_value;if(p&&fv&&!m[p]){const r=choiceMap[fv]||choiceMap[fv.toLowerCase()]||null;if(r&&r.length>2)m[p]=r;}});
-    return m;
-  },[subs,formChoices,allChoices,choiceMap]);
-
-  const vilLabel = useCallback((v)=>{
-    if(!v||v==="-")return"-";
-    const r=choiceMap[v]||choiceMap[v.toLowerCase()]||p2v[v]||p2v[v.toUpperCase()]||null;
-    return r&&r.length>2?r:(r||v);
-  },[choiceMap,p2v]);
-
-  // Stats
-  const total=subs.length, withGPS=subs.filter(s=>s._geolocation?.[0]).length;
-  const avgAcres=total?fmt(subs.reduce((s,r)=>s+num(r["ANS/ANS_total_acres"]),0)/total):0;
-  const avgYield=total?fmt(subs.reduce((s,r)=>s+num(r["ANS/ANS_wheat_yield_per_acre"]),0)/total):0;
-  const gc=(key)=>Object.entries(subs.reduce((a,r)=>{const k=vilLabel(r[key]||"?");a[k]=(a[k]||0)+1;return a;},{})).sort((a,b)=>b[1]-a[1]).map(([l,v])=>({label:l,value:v}));
-  const ga=(key,vk)=>Object.entries(subs.reduce((a,r)=>{const k=vilLabel(r[key]||"?");if(!a[k])a[k]={t:0,n:0};a[k].t+=num(r[vk]);a[k].n++;return a;},{})).map(([v,d])=>({village:v,avg:+(d.t/d.n).toFixed(1)})).sort((a,b)=>b.avg-a.avg);
-  const vilData=gc("ANS/ANS_village");
-  const cropMap={}; subs.forEach(r=>{(r["ANS/ANS_crops_grown"]||"Unknown").split(" ").forEach(c=>{const cl=choiceMap[c]||c;cropMap[cl]=(cropMap[cl]||0)+1;});}); const cropData=Object.entries(cropMap).sort((a,b)=>b[1]-a[1]).map(([l,v])=>({label:l,value:v}));
-  const srvData=gc("surveyor_info/surveyor_name");
-  const strawM={}; subs.forEach(r=>{(r["ANS/ANS_wheat_straw"]||r["wheat_straw_group/straw_treatment"]||"Unknown").split(" ").forEach(t=>{const tl=choiceMap[t]||t;strawM[tl]=(strawM[tl]||0)+1;});}); const strawData=Object.entries(strawM).map(([l,v])=>({label:l,value:v}));
-  const yieldV=ga("ANS/ANS_village","ANS/ANS_wheat_yield_per_acre").slice(0,12);
-  const allCols=subs.length?Object.keys(subs[0]):[];
-  const dispCols=visCols||allCols.slice(0,10);
-  const fIdC={}; subs.forEach(r=>{const id=r["ANS/ANS_farm_id"]||r["location/select_farm_id"];if(id)fIdC[id]=(fIdC[id]||0)+1;}); const dupSet=new Set(Object.keys(fIdC).filter(k=>fIdC[k]>1)); const dupCount=dupSet.size;
-
-  const augSubs = useMemo(()=>subs.map(s=>{
-    const af=getFlags(s,flagRules), sid=String(s._id);
-    const isDis=dismissed.includes(sid), mf=manualFlags[sid]||null;
-    return{...s,_af:af,_dis:isDis,_mf:mf,_flag:(!isDis&&af.length>0)||!!mf};
-  }),[subs,flagRules,dismissed,manualFlags]);
-
-  const totalFlagged=augSubs.filter(s=>s._flag).length, totalClean=total-totalFlagged;
-
-  const mapSubs=subs.filter(s=>!mapSearch||Object.values(s).some(v=>String(v).toLowerCase().includes(mapSearch.toLowerCase())));
-  const mappedSubs=mapSubs.filter(s=>s._geolocation?.length>=2&&s._geolocation[0]);
-
-  const filtered=useMemo(()=>augSubs.filter(r=>{
-    if(dupOnly){const id=r["ANS/ANS_farm_id"]||r["location/select_farm_id"];if(!dupSet.has(id))return false;}
-    if(tblFilter==="flagged"&&!r._flag)return false;
-    if(tblFilter==="clean"&&r._flag)return false;
-    return!search||Object.values(r).some(v=>typeof v==="string"&&v.toLowerCase().includes(search.toLowerCase()));
-  }).sort((a,b)=>new Date(b._submission_time||0)-new Date(a._submission_time||0)),[augSubs,dupOnly,dupSet,tblFilter,search]);
-
-  const submittedIds=useMemo(()=>{const s=new Set();subs.forEach(r=>{const id=r["location/select_farm_id"]||r["ANS/ANS_farm_id"]||"";if(id)s.add(id);});return s;},[subs]);
-  const allFarms=useMemo(()=>{
-    if(!formChoices.length)return subs.map(r=>({farm_id:r["ANS/ANS_farm_id"]||"",village:vilLabel(r["ANS/ANS_village"]),submitted:true,surveyor:r["surveyor_info/surveyor_name"]||"",date:(r["date_time/survey_date"]||r._submission_time||"").slice(0,10)}));
-    return formChoices.map(c=>{const name=c.name||"",p=name.split("_")[0],vn=p2v[p];if(!vn||vn.length<=2)return null;const sub=subs.find(r=>(r["location/select_farm_id"]||r["ANS/ANS_farm_id"])===name);return{farm_id:name,village:vn,submitted:submittedIds.has(name),surveyor:sub?.["surveyor_info/surveyor_name"]||"",date:sub?(sub["date_time/survey_date"]||sub._submission_time||"").slice(0,10):""};}).filter(Boolean);
-  },[formChoices,subs,p2v,submittedIds,vilLabel]);
-  const pendVils=useMemo(()=>[...new Set(allFarms.map(r=>r.village))].filter(v=>v&&v.length>2).sort(),[allFarms]);
-  const pendingCount=allFarms.filter(r=>!r.submitted).length, doneCount=allFarms.filter(r=>r.submitted).length;
-  const pendFiltered=useMemo(()=>{let a=allFarms.filter(r=>{const vOk=pendVil==="all"||r.village===pendVil;const sOk=pendFil==="all"||(pendFil==="pending"&&!r.submitted)||(pendFil==="submitted"&&r.submitted);const sq=!pendSearch||r.farm_id.toLowerCase().includes(pendSearch.toLowerCase())||r.village.toLowerCase().includes(pendSearch.toLowerCase())||(r.surveyor||"").toLowerCase().includes(pendSearch.toLowerCase());return vOk&&sOk&&sq;});if(pendSort==="newest")a.sort((x,y)=>(y.date||"").localeCompare(x.date||""));else if(pendSort==="oldest")a.sort((x,y)=>(x.date||"").localeCompare(y.date||""));else if(pendSort==="village")a.sort((x,y)=>x.village.localeCompare(y.village));return a;},[allFarms,pendVil,pendFil,pendSearch,pendSort]);
-  const vilSummary=useMemo(()=>pendVils.map(v=>{const rows=allFarms.filter(r=>r.village===v),sub=rows.filter(r=>r.submitted).length;return{village:v,total:rows.length,submitted:sub,pending:rows.length-sub,pct:rows.length?Math.round(sub/rows.length*100):0};}).sort((a,b)=>b.pending-a.pending),[pendVils,allFarms]);
-  const flagsFiltered=useMemo(()=>augSubs.filter(s=>{if(!showDismissed&&s._dis&&!s._mf)return false;if(!s._flag&&!showDismissed)return false;if(!flagSearch)return true;const q=flagSearch.toLowerCase();return(s["ANS/ANS_farm_id"]||"").toLowerCase().includes(q)||vilLabel(s["ANS/ANS_village"]).toLowerCase().includes(q)||(s["surveyor_info/surveyor_name"]||"").toLowerCase().includes(q);}).sort((a,b)=>(b._af?.length||0)-(a._af?.length||0)),[augSubs,showDismissed,flagSearch,vilLabel]);
-  const allFieldNames=useMemo(()=>subs.length?Object.keys(subs[0]).filter(k=>!k.startsWith("_")&&!ALWAYS_HIDE.has(k)):[]  ,[subs]);
-
-  const D={bg:theme==="light"?"#f1f5f9":"#020817",hdr:theme==="light"?"#fff":"#0a1628",bdr:theme==="light"?"#e2e8f0":"#1e293b",text:theme==="light"?"#1e293b":"#e2e8f0",muted:theme==="light"?"#6b7280":"#64748b",row1:theme==="light"?"#fff":"transparent",row2:theme==="light"?"#f8fafc":"#070e1a",inp:theme==="light"?"#fff":"#0f172a",card:theme==="light"?"#fff":"#0f172a"};
-
-  const openSub_ = (r) => setOpenSub(r);
-  const modalCommon = { fieldMap, choiceMap, flagRules, vilLabel, dismissed, manualFlags, flagDrafts, dismissDrafts:disDrafts, onDismiss:doDismiss, onUndismiss:doUndismiss, onAddFlag:doAddFlag, onRemoveFlag:doRemoveFlag, onFlagDraftChange:setFlagDraft, onDismissDraftChange:setDisDraft, isMobile:mobile, D, theme, leafletOK };
-
-  if(loading)return(<div style={{minHeight:"100vh",background:D.bg,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}><div style={{width:48,height:48,border:"3px solid #0ea5e944",borderTopColor:"#0ea5e9",borderRadius:"50%",animation:"spin 1s linear infinite"}}/><p style={{color:"#0ea5e9",fontFamily:"monospace"}}>Loading…</p><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>);
-  if(error)return(<div style={{minHeight:"100vh",background:D.bg,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:12,padding:24}}><p style={{color:"#ef4444",fontSize:16}}>⚠ {error}</p><button onClick={fetchData} style={{background:"#0ea5e9",color:"#fff",border:"none",padding:"10px 24px",borderRadius:6,cursor:"pointer",fontWeight:700}}>Retry</button></div>);
-
-  return(
-    <>
-      <style>{`*{box-sizing:border-box}html,body{margin:0;padding:0;overflow-y:scroll!important;overflow-x:hidden!important;height:auto!important}#root{width:100%;height:auto!important;overflow:visible!important}::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:${theme==="light"?"#f1f5f9":"#0f172a"}}::-webkit-scrollbar-thumb{background:${theme==="light"?"#cbd5e1":"#334155"};border-radius:3px}.tb{background:none;border:none;padding:8px 10px;cursor:pointer;font-size:11px;font-weight:600;letter-spacing:.4px;border-bottom:2px solid transparent;color:${D.muted};white-space:nowrap}.tb.a{color:#0ea5e9;border-bottom-color:#0ea5e9}.tb:hover{color:${D.text}}.trow:hover td{background:${theme==="light"?"#f0f9ff!important":"#0c2036!important"}}.trow{cursor:pointer}select{background:${D.inp};color:${D.text};border:1px solid ${D.bdr};padding:5px 8px;border-radius:6px;font-size:11px;outline:none}.inp{background:${D.inp};border:1px solid ${D.bdr};color:${D.text};padding:7px 12px;border-radius:8px;font-size:13px;outline:none;width:100%}.inp:focus{border-color:#0ea5e9}.pill{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;display:inline-block}.btn{padding:5px 12px;border-radius:6px;border:1px solid;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap}@media(max-width:640px){.sr{flex-direction:column!important}.cg,.pg{grid-template-columns:1fr!important}}`}</style>
-      <div style={{background:D.bg,color:D.text,fontFamily:"'Segoe UI',system-ui,sans-serif",width:"100%",minHeight:"100vh"}}>
-
-        {/* HEADER */}
-        <div style={{borderBottom:`1px solid ${D.bdr}`,padding:mobile?"0 10px":"0 18px",background:D.hdr,position:"sticky",top:0,zIndex:200}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",paddingTop:8,gap:6,flexWrap:"wrap"}}>
-            <div style={{flex:1,minWidth:0}}><h1 style={{fontSize:mobile?12:15,fontWeight:800,color:"#0ea5e9",margin:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>🌾 KoboToolbox Dashboard</h1><p style={{fontSize:10,color:D.muted}}>{total} sub · 🚩{totalFlagged} · ✅{totalClean}{dupCount>0?` · ⚠${dupCount}`:""}</p></div>
-            <div style={{display:"flex",gap:4}}><button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")} style={{background:theme==="light"?"#1e293b":"#f1f5f9",color:theme==="light"?"#f1f5f9":"#1e293b",border:"none",padding:"4px 10px",borderRadius:20,cursor:"pointer",fontSize:12,fontWeight:700}}>{theme==="dark"?"☀":"🌙"}</button><button onClick={fetchData} style={{background:"#0ea5e922",border:"1px solid #0ea5e944",color:"#0ea5e9",padding:"4px 10px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:600}}>↺ Refresh</button></div>
+    return (
+      <div style={{display:"flex",flexDirection:"column",gap:20}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:12}}>
+          {cards.map(c=>(
+            <div key={c.label} style={{background:D.card,borderRadius:14,padding:"16px 18px",border:`1px solid ${D.bdr}`,borderLeft:`4px solid ${c.color}`}}>
+              <div style={{fontSize:26,fontWeight:800,color:c.color}}>{c.val}</div>
+              <div style={{fontSize:11,color:D.muted,marginTop:2}}>{c.label}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+          <div style={{background:D.card,borderRadius:14,padding:16,border:`1px solid ${D.bdr}`}}>
+            <div style={{fontWeight:700,fontSize:13,color:D.text,marginBottom:10}}>By Surveyor</div>
+            {bySurveyor.map(([sv,cnt])=>(
+              <div key={sv} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:`1px solid ${D.bdr}22`,fontSize:12}}>
+                <span style={{color:D.text}}>{sv}</span>
+                <span style={{color:D.accent,fontWeight:700}}>{cnt}</span>
+              </div>
+            ))}
           </div>
-          <div style={{display:"flex",marginTop:2,overflowX:"auto"}}>
-            {["overview","analytics","map","table","flags","pending","settings"].map(t=>(
-              <button key={t} className={`tb${tab===t?" a":""}`} onClick={()=>setTab(t)}>
-                {t==="flags"?`🚩FLAGS(${totalFlagged})`:t==="pending"?`⏳(${pendingCount})`:t==="settings"?"⚙SETTINGS":t.toUpperCase()}
-              </button>
+          <div style={{background:D.card,borderRadius:14,padding:16,border:`1px solid ${D.bdr}`}}>
+            <div style={{fontWeight:700,fontSize:13,color:D.text,marginBottom:10}}>By Village</div>
+            {byVil.map(([v,cnt])=>(
+              <div key={v} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:`1px solid ${D.bdr}22`,fontSize:12}}>
+                <span style={{color:D.text}}>{v}</span>
+                <span style={{color:D.accent,fontWeight:700}}>{cnt}</span>
+              </div>
             ))}
           </div>
         </div>
+      </div>
+    );
+  }
 
-        <div style={{padding:mobile?10:18}}>
+  /* ─────────────────────────────────────────────────────── */
+  /* ── FLAGS TAB ── */
+  function FlagsTab() {
+    const flagged = enriched.filter(s=>s._hasFlag && !s._dismissed);
+    const clean   = enriched.filter(s=>!s._hasFlag);
+    const dismissed = enriched.filter(s=>s._dismissed);
 
-          {/* OVERVIEW */}
-          {tab==="overview"&&<div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <div className="sr" style={{display:"flex",flexWrap:"wrap",gap:8}}>
-              <Stat label="Submissions" value={total} color="#0ea5e9" icon="📋" theme={theme}/>
-              <Stat label="GPS" value={withGPS} color="#10b981" icon="📍" theme={theme}/>
-              <Stat label="Avg Acres" value={avgAcres} unit="ac" color="#f59e0b" icon="🌾" theme={theme}/>
-              <Stat label="Yield/ac" value={avgYield} unit="qtl" color="#10b981" icon="📊" theme={theme}/>
-              <Stat label="Flagged" value={totalFlagged} color="#ef4444" icon="🚩" theme={theme}/>
-              <Stat label="Clean" value={totalClean} color="#10b981" icon="✅" theme={theme}/>
+    const displayed = useMemo(()=>{
+      if(!flagSearch.trim()) return flagged;
+      const q = flagSearch.toLowerCase();
+      return flagged.filter(s=>{
+        const rd=rowData(s);
+        return rd._farm.toLowerCase().includes(q)||rd._village.toLowerCase().includes(q)||rd._surveyor.toLowerCase().includes(q);
+      });
+    },[flagSearch, flagged]);
+
+    return (
+      <div style={{display:"flex",flexDirection:"column",gap:14}}>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          {[
+            {label:"🚩 Flagged",val:flagged.length,c:D.danger},
+            {label:"✅ Clean",val:clean.length,c:D.success},
+            {label:"↩ Dismissed",val:dismissed.length,c:D.muted},
+          ].map(b=>(
+            <div key={b.label} style={{background:D.card,border:`1px solid ${D.bdr}`,borderRadius:12,padding:"10px 18px",fontSize:13,fontWeight:600,color:b.c}}>
+              {b.label}: {b.val}
             </div>
-            <div className="cg" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:12}}>
-              <Card title="By Surveyor" theme={theme}><HBar data={srvData} xKey="label" yKey="value" color="#0ea5e9" theme={theme}/></Card>
-              <Card title="Yield by Village" theme={theme}><HBar data={yieldV} xKey="village" yKey="avg" color="#10b981" theme={theme}/></Card>
-            </div>
-            <div className="pg" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:12}}>
-              <Card title="Crops" theme={theme}><PieC data={cropData.slice(0,5)}/></Card>
-              <Card title="Villages" theme={theme}><PieC data={vilData.slice(0,7)}/></Card>
-              <Card title="Straw" theme={theme}><PieC data={strawData}/></Card>
-            </div>
-          </div>}
-
-          {/* ANALYTICS */}
-          {tab==="analytics"&&<div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <div className="cg" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:12}}>
-              <Card title="By Village" theme={theme}><HBar data={vilData} xKey="label" yKey="value" color="#0ea5e9" theme={theme} maxItems={25}/></Card>
-              <Card title="By Surveyor" theme={theme}><HBar data={srvData} xKey="label" yKey="value" color="#f59e0b" theme={theme}/></Card>
-            </div>
-            <Card title="Village Summary" theme={theme}><div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:11,minWidth:500}}><thead><tr style={{borderBottom:`1px solid ${D.bdr}`,background:theme==="light"?"#f8fafc":"#071020"}}>{["Village","#","Acres","Yield","DAP","Urea kg"].map(h=><th key={h} style={{padding:"6px 10px",textAlign:"left",color:D.muted,fontWeight:600}}>{h}</th>)}</tr></thead><tbody>{Object.entries(subs.reduce((a,r)=>{const v=vilLabel(r["ANS/ANS_village"]||"?");if(!a[v])a[v]={n:0,ac:0,yi:0,dap:0,ur:0};a[v].n++;a[v].ac+=num(r["ANS/ANS_total_acres"]);a[v].yi+=num(r["ANS/ANS_wheat_yield_per_acre"]);a[v].dap+=num(r["ANS/ANS_dap_kg_per_acre"]);a[v].ur+=num(r["ANS/ANS_urea_total_kg"]);return a;},{})).sort((a,b)=>b[1].n-a[1].n).map(([v,d],i)=><tr key={i} style={{borderBottom:`1px solid ${D.bdr}`,background:i%2?D.row2:D.row1}}><td style={{padding:"5px 10px",fontWeight:600}}>{v}</td><td style={{padding:"5px 10px",color:"#0ea5e9"}}>{d.n}</td><td style={{padding:"5px 10px"}}>{fmt(d.ac/d.n)}</td><td style={{padding:"5px 10px",color:"#10b981"}}>{fmt(d.yi/d.n)}</td><td style={{padding:"5px 10px"}}>{fmt(d.dap/d.n,0)}</td><td style={{padding:"5px 10px"}}>{fmt(d.ur/d.n,0)}</td></tr>)}</tbody></table></div></Card>
-          </div>}
-
-          {/* MAP */}
-          {tab==="map"&&<div style={{display:"flex",flexDirection:"column",gap:8}}>
-            <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-              <div style={{position:"relative",flex:1,minWidth:160}}><span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontSize:13}}>🔍</span><input className="inp" style={{paddingLeft:30}} value={mapSearch} onChange={e=>{setMapSearch(e.target.value);setSelId(null);}} placeholder="Search farm, village…"/></div>
-              {["satellite","street"].map(l=><button key={l} onClick={()=>setMapLayer(l)} className="btn" style={{borderColor:mapLayer===l?"#0ea5e9":D.bdr,background:mapLayer===l?"#0ea5e922":"transparent",color:mapLayer===l?"#0ea5e9":D.muted}}>{l==="satellite"?"🛰":"🗺"} {mobile?"":l}</button>)}
-            {/* Mobile list toggle */}
-              {mobile&&<button onClick={()=>setShowMapList(v=>!v)} className="btn" style={{borderColor:showMapList?"#0ea5e9":D.bdr,background:showMapList?"#0ea5e922":"transparent",color:showMapList?"#0ea5e9":D.muted,padding:"6px 14px",fontSize:12}}>📍 {mappedSubs.length} Locations {showMapList?"▲":"▼"}</button>}
-            </div>
-
-            {/* Mobile location list — proper touch-scroll sheet */}
-            {mobile&&showMapList&&(
-              <div style={{background:D.card,border:`1px solid ${D.bdr}`,borderRadius:12,
-                maxHeight:300,overflow:"hidden",boxShadow:"0 4px 20px #0003",position:"relative",zIndex:10}}>
-                <div style={{padding:"10px 14px 8px",borderBottom:`1px solid ${D.bdr}`,
-                  display:"flex",justifyContent:"space-between",alignItems:"center",background:D.card}}>
-                  <span style={{fontSize:12,fontWeight:700,color:D.muted}}>📍 {mappedSubs.length} locations — tap to select</span>
-                  <button onClick={()=>setShowMapList(false)} style={{background:"none",border:"none",color:D.muted,cursor:"pointer",fontSize:20,padding:"0 4px",lineHeight:1}}>×</button>
-                </div>
-                <div style={{overflowY:"scroll",maxHeight:240,WebkitOverflowScrolling:"touch"}}>
-                  {mappedSubs.map(s=>{const fl=getFlags(s,flagRules);const isSel=s._id===selId;return(
-                    <div key={s._id}
-                      onTouchEnd={e=>{e.preventDefault();setSelId(isSel?null:s._id);setShowMapList(false);}}
-                      onClick={()=>{setSelId(isSel?null:s._id);setShowMapList(false);}}
-                      style={{padding:"12px 14px",borderBottom:`1px solid ${D.bdr}`,cursor:"pointer",
-                        background:isSel?(theme==="light"?"#eff6ff":"#0f2a4a"):"transparent",
-                        display:"flex",justifyContent:"space-between",alignItems:"center",
-                        WebkitTapHighlightColor:"transparent",userSelect:"none",minHeight:52}}>
-                      <div>
-                        <div style={{fontSize:13,fontWeight:700,color:isSel?"#0ea5e9":D.text}}>
-                          {fl.length>0?"🚩 ":""}{s["ANS/ANS_farm_id"]||"Farm"}
-                        </div>
-                        <div style={{fontSize:11,color:D.muted,marginTop:2}}>
-                          {vilLabel(s["ANS/ANS_village"])} · {s["surveyor_info/surveyor_name"]||""}
-                        </div>
-                      </div>
-                      <span style={{fontSize:11,color:"#0ea5e9",fontWeight:600,flexShrink:0,marginLeft:8}}>▶</span>
-                    </div>
-                  );})}
-                </div>
-              </div>
-            )}
-
-            <div style={{display:"flex",flexDirection:mobile?"column":"row",gap:10,height:mobile?"auto":"calc(100vh - 240px)"}}>
-              {/* Desktop sidebar list */}
-              {!mobile&&<div style={{width:230,flexShrink:0,background:D.card,border:`1px solid ${D.bdr}`,borderRadius:10,overflow:"hidden",display:"flex",flexDirection:"column"}}>
-                <div style={{padding:"8px 12px",borderBottom:`1px solid ${D.bdr}`,fontSize:10,color:D.muted,fontWeight:700}}>📍 {mappedSubs.length} LOCATIONS</div>
-                <div style={{overflowY:"auto",flex:1}}>
-                  {mappedSubs.map(s=>{const fl=getFlags(s,flagRules);return<div key={s._id} onClick={()=>setSelId(s._id===selId?null:s._id)} style={{padding:"7px 12px",borderBottom:`1px solid ${D.bdr}`,cursor:"pointer",background:s._id===selId?(theme==="light"?"#eff6ff":"#0f2a4a"):"transparent",borderLeft:s._id===selId?"3px solid #0ea5e9":"3px solid transparent"}}>
-                    <div style={{fontSize:11,fontWeight:700,color:s._id===selId?"#0ea5e9":D.text}}>{fl.length?"🚩 ":""}{s["ANS/ANS_farm_id"]||"Farm"}</div>
-                    <div style={{fontSize:10,color:D.muted}}>{vilLabel(s["ANS/ANS_village"])} · {s["surveyor_info/surveyor_name"]||""}</div>
-                  </div>;})}
-                </div>
-              </div>}
-
-              <div style={{flex:1,position:"relative",borderRadius:10,overflow:"hidden",border:`1px solid ${D.bdr}`,height:mobile?"72vw":"100%",minHeight:280}}>
-                {leafletOK?<LeafletMap subs={mapSubs} selId={selId} onSel={setSelId} layer={mapLayer} visible={tab==="map"} rules={flagRules}/>:<div style={{height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:D.muted}}>Loading map…</div>}
-
-                {/* Info panel for selected */}
-                {selId&&(()=>{const s=augSubs.find(x=>x._id===selId)||subs.find(x=>x._id===selId);if(!s)return null;const fl=getFlags(s,flagRules);return(
-                  <div style={{position:"absolute",bottom:mobile?0:12,right:mobile?0:12,left:mobile?0:"auto",width:mobile?"100%":"270px",maxHeight:"46%",background:theme==="light"?"rgba(255,255,255,.97)":"rgba(10,22,40,.97)",border:`1px solid ${D.bdr}`,borderRadius:mobile?"12px 12px 0 0":"10px",boxShadow:"0 4px 20px #0006",display:"flex",flexDirection:"column",zIndex:500}}>
-                    <div style={{display:"flex",justifyContent:"space-between",padding:"8px 12px",borderBottom:`1px solid ${D.bdr}`,flexShrink:0}}>
-                      <div>
-                        <div style={{color:"#0ea5e9",fontWeight:800,fontSize:13}}>{fl.length>0&&"🚩 "}{s["ANS/ANS_farm_id"]||"Farm"}</div>
-                        <div style={{color:D.muted,fontSize:10}}>{vilLabel(s["ANS/ANS_village"])}</div>
-                      </div>
-                      <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                        <button onClick={()=>openSub_(augSubs.find(x=>x._id===s._id)||s)} style={{background:"#0ea5e922",border:"1px solid #0ea5e944",color:"#0ea5e9",padding:"3px 8px",borderRadius:5,cursor:"pointer",fontSize:10,fontWeight:600}}>Full Form</button>
-                        <button onClick={()=>setSelId(null)} style={{background:"none",border:"none",color:D.muted,cursor:"pointer",fontSize:16}}>✕</button>
-                      </div>
-                    </div>
-                    <div style={{overflowY:"auto",padding:"6px 12px",flex:1}}>
-                      {fl.length>0&&<div style={{background:"#ef444418",border:"1px solid #ef444444",borderRadius:6,padding:"4px 8px",marginBottom:4,fontSize:10,color:"#ef4444"}}>{fl.map((f,i)=><div key={i}>🚩 {f.label}: {f.issue}</div>)}</div>}
-                      {displayFields(s,fieldMap,choiceMap).slice(0,8).map(({label,value})=>(
-                        <div key={label} style={{display:"flex",justifyContent:"space-between",gap:6,padding:"3px 0",borderBottom:`1px solid ${D.bdr}22`}}>
-                          <span style={{color:D.muted,fontSize:9,textTransform:"capitalize"}}>{label}</span>
-                          <span style={{color:D.text,fontSize:11,fontWeight:500,textAlign:"right",wordBreak:"break-word"}}>{value}</span>
-                        </div>
+          ))}
+        </div>
+        {/* active rules summary */}
+        <div style={{background:D.card,border:`1px solid ${D.bdr}`,borderRadius:12,padding:14}}>
+          <div style={{fontWeight:700,fontSize:12,color:D.muted,marginBottom:8}}>ACTIVE FLAG RULES</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+            {rules.filter(r=>r.active).map(r=>(
+              <span key={r.id} style={{background:D.tag,color:D.tagT,borderRadius:20,padding:"3px 10px",fontSize:11,fontWeight:600}}>
+                {r.label}: {r.min??"-"}–{r.max??"-"} {r.unit}
+              </span>
+            ))}
+          </div>
+        </div>
+        <input value={flagSearch} onChange={e=>setFlagSearch(e.target.value)} placeholder="Search farm ID, village, surveyor…"
+          style={{padding:"8px 14px",border:`1px solid ${D.bdr}`,borderRadius:10,background:D.card,color:D.text,fontSize:13,outline:"none"}} />
+        {/* table */}
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+            <thead>
+              <tr style={{background:D.hover}}>
+                {["Farm ID","Village","Surveyor","Date","Flags","Actions"].map(h=>(
+                  <th key={h} style={{padding:"8px 10px",textAlign:"left",color:D.muted,fontWeight:600,whiteSpace:"nowrap",borderBottom:`1px solid ${D.bdr}`}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {displayed.map(s=>{
+                const rd=rowData(s);
+                return (
+                  <tr key={s._id} onClick={()=>setModal(s)} style={{cursor:"pointer",borderBottom:`1px solid ${D.bdr}22`}}
+                    onMouseEnter={e=>e.currentTarget.style.background=D.hover}
+                    onMouseLeave={e=>e.currentTarget.style.background=""}>
+                    <td style={{padding:"8px 10px",color:D.text,fontWeight:600}}>{rd._farm}</td>
+                    <td style={{padding:"8px 10px",color:D.text}}>{rd._village}</td>
+                    <td style={{padding:"8px 10px",color:D.muted}}>{rd._surveyor}</td>
+                    <td style={{padding:"8px 10px",color:D.muted,whiteSpace:"nowrap"}}>{rd._date}</td>
+                    <td style={{padding:"8px 10px"}}>
+                      {s._autoFlags.map((f,i)=>(
+                        <div key={i} style={{color:D.danger,fontSize:11}}>{f.rule.label}: {f.val} ({f.dir})</div>
                       ))}
-                    </div>
-                  </div>
-                );})()}
-              </div>
-            </div>
-          </div>}
+                      {s._manFlag?.active && <div style={{color:D.danger,fontSize:11}}>Manual 🚩</div>}
+                    </td>
+                    <td style={{padding:"8px 10px"}}>
+                      <button onClick={e=>{e.stopPropagation();toggleDismiss(String(s._id));}}
+                        style={{fontSize:10,padding:"2px 8px",border:`1px solid ${D.bdr}`,borderRadius:6,background:"transparent",color:D.muted,cursor:"pointer"}}>
+                        {s._dismissed?"↩":"✓ Normal"}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+              {displayed.length===0 && (
+                <tr><td colSpan={6} style={{textAlign:"center",padding:24,color:D.muted}}>No flagged forms</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
 
-          {/* TABLE */}
-          {tab==="table"&&<div style={{display:"flex",flexDirection:"column",gap:10}}>
-            {dupCount>0&&<div style={{background:theme==="light"?"#fef3c7":"#1c1a00",border:"1px solid #f59e0b66",borderRadius:8,padding:"8px 14px",fontSize:12,color:"#f59e0b"}}>⚠️ {dupCount} duplicate Farm IDs</div>}
-            <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search…" className="inp" style={{flex:1,minWidth:150}}/>
-              {["all","flagged","clean"].map(f=><button key={f} onClick={()=>setTblFilter(f)} className="btn" style={{borderColor:tblFilter===f?(f==="flagged"?"#ef4444":f==="clean"?"#10b981":"#0ea5e9"):D.bdr,background:tblFilter===f?(f==="flagged"?"#ef444422":f==="clean"?"#10b98122":"#0ea5e922"):"transparent",color:tblFilter===f?(f==="flagged"?"#ef4444":f==="clean"?"#10b981":"#0ea5e9"):D.muted}}>
-                {f==="all"?`All(${total})`:f==="flagged"?`🚩(${totalFlagged})`:f==="clean"?`✅(${totalClean})`:f}
-              </button>)}
-              {dupCount>0&&<button onClick={()=>setDupOnly(d=>!d)} className="btn" style={{borderColor:dupOnly?"#ef4444":D.bdr,background:dupOnly?"#ef444422":"transparent",color:dupOnly?"#ef4444":D.muted}}>Dup</button>}
-              <button onClick={()=>setShowColPick(v=>!v)} className="btn" style={{borderColor:showColPick?"#8b5cf6":D.bdr,background:showColPick?"#8b5cf622":"transparent",color:showColPick?"#8b5cf6":D.muted}}>☰ Cols</button>
-              <DlBtn rows={filtered} fn="survey" theme={theme}/>
-              {selRows.length>0&&<span style={{fontSize:11,color:"#0ea5e9",fontWeight:700,padding:"4px 10px",background:"#0ea5e922",borderRadius:6}}>✓ {selRows.length} selected</span>}
-            </div>
-            {showColPick&&<Card title="Show / Hide Columns" theme={theme}><div style={{display:"flex",flexWrap:"wrap",gap:6,maxHeight:180,overflowY:"auto"}}>{allCols.map(c=>{const on=dispCols.includes(c);return<label key={c} style={{display:"flex",alignItems:"center",gap:4,fontSize:11,padding:"3px 8px",borderRadius:6,background:on?"#0ea5e922":"transparent",border:`1px solid ${on?"#0ea5e944":D.bdr}`,cursor:"pointer",color:on?"#0ea5e9":D.muted}}><input type="checkbox" checked={on} onChange={()=>on?setVisCols(p=>(p||[]).filter(x=>x!==c)):setVisCols(p=>[...(p||[]),c])}/>{c.split("/").pop().replace(/_/g," ")}</label>;})</div></Card>}
-            <div style={{background:D.card,border:`1px solid ${D.bdr}`,borderRadius:10,overflow:"hidden"}}>
-              <div style={{padding:"5px 12px",borderBottom:`1px solid ${D.bdr}`,fontSize:10,color:D.muted,background:theme==="light"?"#f8fafc":"#071020"}}>Tap row for full form · Showing {filtered.length} of {total}</div>
-              <div style={{overflowX:"scroll",overflowY:"auto",maxHeight:"58vh",WebkitOverflowScrolling:"touch"}}>
-                <table style={{borderCollapse:"collapse",fontSize:11,tableLayout:"auto",whiteSpace:"nowrap"}}>
-                  <thead style={{position:"sticky",top:0,zIndex:10}}><tr style={{borderBottom:`1px solid ${D.bdr}`,background:theme==="light"?"#f8fafc":"#071020"}}>
-                    <th style={{padding:"7px 8px",width:28,position:"sticky",left:0,background:theme==="light"?"#f8fafc":"#071020",zIndex:11}}><input type="checkbox" onChange={e=>setSelRows(e.target.checked?filtered.map(r=>r._id):[])} checked={selRows.length===filtered.length&&filtered.length>0}/></th>
-                    <th style={{padding:"7px 4px",width:22,position:"sticky",left:28,background:theme==="light"?"#f8fafc":"#071020",zIndex:11,fontSize:9}}>⚠🚩</th>
-                    {dispCols.map(c=><th key={c} style={{padding:"7px 10px",textAlign:"left",color:D.muted,fontWeight:600,fontSize:10}}>{(fieldMap[c]?.label||c.split("/").pop().replace(/_/g," ")).toUpperCase()}</th>)}
-                  </tr></thead>
-                  <tbody>{filtered.slice(0,300).map((r,i)=>{const fid=r["ANS/ANS_farm_id"]||r["location/select_farm_id"];const isDup=fid&&dupSet.has(fid);const bg=r._flag?(theme==="light"?"#fef2f2":"#2a0000"):isDup?(theme==="light"?"#fef9c3":"#2d2200"):i%2?D.row2:D.row1;return<tr key={r._id} className="trow" onClick={()=>openSub_(r)} style={{borderBottom:`1px solid ${D.bdr}`,background:bg}}>
-                    <td style={{padding:"5px 8px",position:"sticky",left:0,background:bg,zIndex:1}} onClick={e=>{e.stopPropagation();setSelRows(s=>s.includes(r._id)?s.filter(x=>x!==r._id):[...s,r._id]);}}><input type="checkbox" checked={selRows.includes(r._id)} onChange={()=>{}} onClick={e=>e.stopPropagation()}/></td>
-                    <td style={{padding:"5px 4px",position:"sticky",left:28,background:bg,zIndex:1,fontSize:12}}>{r._flag?"🚩":isDup?"⚠️":""}</td>
-                    {dispCols.map(c=>{const raw=String(r[c]??"");return<td key={c} style={{padding:"5px 10px",maxWidth:180,overflow:"hidden",textOverflow:"ellipsis"}}>{choiceMap[raw]||raw}</td>;})}
-                  </tr>;})}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>}
+  /* ─────────────────────────────────────────────────────── */
+  /* ── PENDING TAB ── */
+  function PendingTab() {
+    const pendSubs = useMemo(()=>{
+      // pending = farm IDs not yet submitted
+      // if we don't have expectedFarmIDs, show submissions with "pending" validation status
+      if(expectedFarmIDs.length > 0){
+        return pendingFarmIDs.map(fid=>({
+          _farmId: fid,
+          _village: resolveVilFromFarmId(fid),
+        }));
+      }
+      // fallback: show all submissions sorted
+      return enriched;
+    },[]);
 
-          {/* FLAGS */}
-          {tab==="flags"&&<div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <div className="sr" style={{display:"flex",flexWrap:"wrap",gap:8}}>
-              <Stat label="Active Flags" value={totalFlagged} color="#ef4444" icon="🚩" theme={theme}/>
-              <Stat label="Clean" value={totalClean} color="#10b981" icon="✅" theme={theme}/>
-              <Stat label="Dismissed" value={dismissed.length} color="#6b7280" icon="✓" theme={theme}/>
-              <Stat label="Manual Notes" value={Object.keys(manualFlags).length} color="#f59e0b" icon="👁" theme={theme}/>
-            </div>
-            <Card title="Active Rules" theme={theme}><div style={{display:"flex",flexDirection:"column",gap:4}}>{flagRules.filter(r=>r.enabled).map((r,i)=><div key={i} style={{display:"flex",gap:8,padding:"3px 0",borderBottom:`1px solid ${D.bdr}22`}}><span style={{fontSize:11,flex:1,fontWeight:600}}>{r.label}</span><span style={{fontSize:11,color:D.muted}}>{r.min!=null?`Min ${r.min}`:""} {r.max!=null?`Max ${r.max}`:""}</span></div>)}<p style={{fontSize:10,color:D.muted,margin:"8px 0 0"}}>💡 Modify in ⚙ Settings tab</p></div></Card>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-              <input value={flagSearch} onChange={e=>setFlagSearch(e.target.value)} placeholder="🔍 Search flags…" className="inp" style={{flex:1,minWidth:150}}/>
-              <label style={{fontSize:11,color:D.muted,display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}><input type="checkbox" checked={showDismissed} onChange={e=>setShowDismissed(e.target.checked)}/> Show Dismissed</label>
-              <DlBtn rows={flagsFiltered.map(r=>({farm_id:r["ANS/ANS_farm_id"],village:vilLabel(r["ANS/ANS_village"]),surveyor:r["surveyor_info/surveyor_name"],flags:(r._af||[]).map(f=>`${f.label}:${f.issue}`).join("; "),manual:r._mf||"",status:r._dis?"dismissed":"active"}))} fn="flags" theme={theme}/>
-            </div>
-            <div style={{background:D.card,border:`1px solid ${D.bdr}`,borderRadius:10,overflow:"hidden"}}>
-              <div style={{overflowX:"auto",overflowY:"auto",maxHeight:"55vh"}}>
-                <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-                  <thead style={{position:"sticky",top:0,zIndex:5}}><tr style={{borderBottom:`1px solid ${D.bdr}`,background:theme==="light"?"#fef2f2":"#1a0000"}}>{["Farm ID","Village","Surveyor","Status","Issues"].map(h=><th key={h} style={{padding:"7px 12px",textAlign:"left",color:"#ef4444",fontWeight:600}}>{h}</th>)}</tr></thead>
-                  <tbody>{flagsFiltered.map((r,i)=><tr key={i} className="trow" onClick={()=>openSub_(r)} style={{borderBottom:`1px solid ${D.bdr}`,background:r._dis?(theme==="light"?"#f8f8f8":"#111"):i%2?(theme==="light"?"#fff":"#0a0000"):(theme==="light"?"#fff8f8":"#120000")}}>
-                    <td style={{padding:"5px 12px",fontFamily:"monospace",fontSize:10}}>{r["ANS/ANS_farm_id"]||"-"}</td>
-                    <td style={{padding:"5px 12px"}}>{vilLabel(r["ANS/ANS_village"])}</td>
-                    <td style={{padding:"5px 12px",color:D.muted,fontSize:10}}>{r["surveyor_info/surveyor_name"]||"-"}</td>
-                    <td style={{padding:"5px 12px"}}>{r._dis?<span className="pill" style={{background:"#10b98122",color:"#10b981"}}>✓ Normal</span>:r._mf?<span className="pill" style={{background:"#f59e0b22",color:"#f59e0b"}}>👁 Note</span>:<span className="pill" style={{background:"#ef444422",color:"#ef4444"}}>🚩 Flag</span>}</td>
-                    <td style={{padding:"5px 12px",fontSize:10,color:"#ef4444",maxWidth:200,overflow:"hidden",textOverflow:"ellipsis"}}>{(r._af||[]).map(f=>`${f.label}:${f.issue}`).join(" · ")}{r._mf?` 👁${r._mf}`:""}</td>
-                  </tr>)}</tbody>
-                </table>
-                {flagsFiltered.length===0&&<div style={{padding:"20px",textAlign:"center",color:D.muted}}>No flags match.</div>}
-              </div>
-            </div>
-          </div>}
+    const resolveVilFromFarmId = (fid) => {
+      // try to get village from submitted forms with same farm ID
+      const match = enriched.find(s=>{
+        const f=s["location/select_farm_id"]||s["ANS/ANS_farm_id"]||"";
+        return String(f).trim()===String(fid).trim();
+      });
+      if(match) return resolveVil(match);
+      // try village from form choices
+      if(formDef){
+        const choices=formDef.content?.choices||[];
+        const fChoice=choices.find(c=>(c.name||c.$autoname||"")===fid);
+        if(fChoice){
+          const vilCode=(fChoice["filter_value"]||"").toUpperCase();
+          return vilMap[vilCode]||vilCode||null;
+        }
+      }
+      return null;
+    };
 
-          {/* PENDING */}
-          {tab==="pending"&&<div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <div className="sr" style={{display:"flex",flexWrap:"wrap",gap:8}}>
-              <Stat label="Total Farm IDs" value={allFarms.length} color="#0ea5e9" icon="🗂" theme={theme}/>
-              <Stat label="Done" value={doneCount} color="#10b981" icon="✅" theme={theme}/>
-              <Stat label="Pending" value={pendingCount} color="#ef4444" icon="⏳" theme={theme}/>
-              <Stat label="Progress" value={allFarms.length?Math.round(doneCount/allFarms.length*100):0} unit="%" color="#f59e0b" icon="📈" theme={theme}/>
-            </div>
-            <Card title="By Village" theme={theme}><div style={{display:"flex",flexDirection:"column",gap:6}}>{vilSummary.map((v,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:8}}><span style={{width:140,fontSize:11,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.village}</span><div style={{flex:1,background:D.bdr,borderRadius:4,height:18,overflow:"hidden",position:"relative",minWidth:40}}><div style={{width:`${v.pct}%`,height:"100%",borderRadius:4,background:v.pct===100?"#10b981":v.pct>60?"#f59e0b":"#ef4444"}}/><span style={{position:"absolute",left:6,top:"50%",transform:"translateY(-50%)",fontSize:9,fontWeight:700,color:"#fff"}}>{v.pct}%</span></div><span style={{width:80,fontSize:10,flexShrink:0,textAlign:"right"}}><span style={{color:"#10b981"}}>{v.submitted}</span>/{v.total}</span></div>)}</div></Card>
-            <Card title="Farm IDs — tap done rows to see form" theme={theme} noPad extra={<div style={{display:"flex",gap:6,flexWrap:"wrap",padding:"0 14px",alignItems:"center"}}>
-              <input value={pendSearch} onChange={e=>setPendSearch(e.target.value)} placeholder="🔍 Search…" className="inp" style={{flex:1,minWidth:120,padding:"5px 10px",fontSize:11}}/>
-              <select value={pendVil} onChange={e=>setPendVil(e.target.value)}><option value="all">All Villages</option>{pendVils.map(v=><option key={v} value={v}>{v}</option>)}</select>
-              <select value={pendFil} onChange={e=>setPendFil(e.target.value)}><option value="all">All</option><option value="submitted">✅ Done</option><option value="pending">⏳ Pending</option></select>
-              <select value={pendSort} onChange={e=>setPendSort(e.target.value)}><option value="newest">Newest First</option><option value="oldest">Oldest First</option><option value="village">By Village</option></select>
-              <DlBtn rows={pendFiltered.map(r=>({farm_id:r.farm_id,village:r.village,status:r.submitted?"done":"pending",surveyor:r.surveyor,date:r.date}))} fn="pending" theme={theme}/>
-            </div>}>
-              <div style={{overflowX:"auto",maxHeight:"50vh",overflowY:"auto"}}>
-                <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-                  <thead style={{position:"sticky",top:0,zIndex:5}}><tr style={{borderBottom:`1px solid ${D.bdr}`,background:theme==="light"?"#f8fafc":"#071020"}}>{["Farm ID","Village","Status","Surveyor","Date"].map(h=><th key={h} style={{padding:"6px 10px",textAlign:"left",color:D.muted,fontWeight:600}}>{h}</th>)}</tr></thead>
-                  <tbody>{pendFiltered.map((r,i)=>{
-                    // Robust lookup: check several possible farm ID fields in submission
-                    const fid = r.farm_id;
-                    const fullSub = fid ? (
-                      augSubs.find(s=>{
-                        const sid = s["ANS/ANS_farm_id"]||s["location/select_farm_id"]||s["ANS/ANS_farm_id_2"]||"";
-                        return sid === fid || sid.toLowerCase() === fid.toLowerCase();
-                      }) ||
-                      subs.find(s=>{
-                        const sid = s["ANS/ANS_farm_id"]||s["location/select_farm_id"]||"";
-                        return sid === fid || sid.toLowerCase() === fid.toLowerCase();
-                      })
-                    ) : null;
-                    const canOpen = !!fullSub;
-                    return<tr key={i}
-                      onClick={()=>{ if(canOpen) openSub_(fullSub); }}
-                      className={canOpen?"trow":""} style={{borderBottom:`1px solid ${D.bdr}`,background:i%2?D.row2:D.row1,cursor:canOpen?"pointer":"default"}}>
-                      <td style={{padding:"5px 10px",fontFamily:"monospace",fontSize:10}}>{r.farm_id}</td>
-                      <td style={{padding:"5px 10px"}}>{r.village}</td>
-                      <td style={{padding:"5px 10px"}}>{r.submitted?<span className="pill" style={{background:"#10b98122",color:"#10b981"}}>✓ Done</span>:<span className="pill" style={{background:"#ef444422",color:"#ef4444"}}>⏳</span>}</td>
-                      <td style={{padding:"5px 10px",color:D.muted,fontSize:10}}>{r.surveyor||"-"}</td>
-                      <td style={{padding:"5px 10px",color:D.muted,fontSize:10}}>{r.date||"-"}</td>
-                      {canOpen && <td style={{padding:"5px 8px",color:"#0ea5e9",fontSize:11}}>▶</td>}
-                    </tr>;
-                  })}</tbody>
-                </table>
-                {pendFiltered.length===0&&<div style={{padding:"16px",textAlign:"center",color:D.muted}}>No results.</div>}
-              </div>
-            </Card>
-          </div>}
+    // If using submissions directly (no expected farm IDs)
+    const sortedSubs = useMemo(()=>{
+      let s=[...enriched];
+      if(pendSort==="newest") s.sort((a,b)=>new Date(b._submission_time)-new Date(a._submission_time));
+      if(pendSort==="oldest") s.sort((a,b)=>new Date(a._submission_time)-new Date(b._submission_time));
+      if(pendSort==="village") s.sort((a,b)=>(resolveVil(a)||"").localeCompare(resolveVil(b)||""));
+      if(pendVil!=="all") s=s.filter(x=>resolveVil(x)===pendVil);
+      if(pendSearch.trim()){
+        const q=pendSearch.toLowerCase();
+        s=s.filter(x=>{
+          const rd=rowData(x);
+          return rd._farm.toLowerCase().includes(q)||rd._village.toLowerCase().includes(q)||rd._surveyor.toLowerCase().includes(q);
+        });
+      }
+      return s;
+    },[pendSort, pendVil, pendSearch]);
 
-          {/* SETTINGS */}
-          {tab==="settings"&&<div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <Card title="🚩 Red Flag Thresholds" theme={theme}>
-              <p style={{fontSize:12,color:D.muted,marginBottom:14}}>Enable/disable and set min/max for each field. Changes are saved automatically to your browser.</p>
-              <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                {flagRules.map((rule,idx)=>(
-                  <div key={idx} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:rule.enabled?(theme==="light"?"#fef2f2":"#1a0a0a"):(theme==="light"?"#f8fafc":"#0a0e16"),borderRadius:8,border:`1px solid ${rule.enabled?"#ef444444":D.bdr}`,flexWrap:"wrap"}}>
-                    <label style={{display:"flex",alignItems:"center",gap:6,flex:1,minWidth:150,cursor:"pointer"}}>
-                      <input type="checkbox" checked={rule.enabled} onChange={e=>{const u=[...flagRules];u[idx]={...u[idx],enabled:e.target.checked};setFlagRules(u);sw("kobo_rules",u);}}/>
-                      <span style={{fontSize:12,fontWeight:600,color:rule.enabled?D.text:D.muted}}>{rule.label}</span>
-                    </label>
-                    <span style={{fontSize:9,color:D.muted,fontFamily:"monospace",minWidth:80,maxWidth:140,overflow:"hidden",textOverflow:"ellipsis"}}>{rule.field}</span>
-                    <div style={{display:"flex",alignItems:"center",gap:4}}><span style={{fontSize:10,color:D.muted}}>Min</span><input type="number" value={rule.min??""} onChange={e=>{const u=[...flagRules];u[idx]={...u[idx],min:e.target.value===""?null:Number(e.target.value)};setFlagRules(u);sw("kobo_rules",u);}} style={{width:60,padding:"3px 6px",fontSize:11,background:D.inp,border:`1px solid ${D.bdr}`,borderRadius:4,color:D.text}} placeholder="—"/></div>
-                    <div style={{display:"flex",alignItems:"center",gap:4}}><span style={{fontSize:10,color:D.muted}}>Max</span><input type="number" value={rule.max??""} onChange={e=>{const u=[...flagRules];u[idx]={...u[idx],max:e.target.value===""?null:Number(e.target.value)};setFlagRules(u);sw("kobo_rules",u);}} style={{width:60,padding:"3px 6px",fontSize:11,background:D.inp,border:`1px solid ${D.bdr}`,borderRadius:4,color:D.text}} placeholder="—"/></div>
-                    <button onClick={()=>{const u=flagRules.filter((_,j)=>j!==idx);setFlagRules(u);sw("kobo_rules",u);}} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:16,padding:"2px 6px",flexShrink:0}}>✕</button>
-                  </div>
+    const showSubs = expectedFarmIDs.length===0;
+
+    return (
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",fontSize:12}}>
+          <div style={{background:D.card,border:`1px solid ${D.bdr}`,borderRadius:10,padding:"8px 14px",color:D.text}}>
+            Total Submissions: <b style={{color:D.accent}}>{enriched.length}</b>
+          </div>
+          {expectedFarmIDs.length>0 && <>
+            <div style={{background:D.card,border:`1px solid ${D.bdr}`,borderRadius:10,padding:"8px 14px",color:D.text}}>
+              Done: <b style={{color:D.success}}>{submittedFarmIDs.size}</b>
+            </div>
+            <div style={{background:D.card,border:`1px solid ${D.bdr}`,borderRadius:10,padding:"8px 14px",color:D.text}}>
+              Pending: <b style={{color:D.warn}}>{pendingFarmIDs.length}</b>
+            </div>
+          </>}
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <input value={pendSearch} onChange={e=>setPendSearch(e.target.value)} placeholder="Search…"
+            style={{flex:"1 1 160px",padding:"7px 12px",border:`1px solid ${D.bdr}`,borderRadius:10,background:D.card,color:D.text,fontSize:12,outline:"none"}} />
+          <select value={pendSort} onChange={e=>setPendSort(e.target.value)}
+            style={{padding:"7px 12px",border:`1px solid ${D.bdr}`,borderRadius:10,background:D.card,color:D.text,fontSize:12,outline:"none"}}>
+            <option value="newest">Newest First</option>
+            <option value="oldest">Oldest First</option>
+            <option value="village">By Village</option>
+          </select>
+          <select value={pendVil} onChange={e=>setPendVil(e.target.value)}
+            style={{padding:"7px 12px",border:`1px solid ${D.bdr}`,borderRadius:10,background:D.card,color:D.text,fontSize:12,outline:"none"}}>
+            <option value="all">All Villages</option>
+            {allVillages.map(v=><option key={v} value={v}>{v}</option>)}
+          </select>
+        </div>
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+            <thead>
+              <tr style={{background:D.hover}}>
+                {["Farm ID","Village","Surveyor","Date","Status","Flags"].map(h=>(
+                  <th key={h} style={{padding:"8px 10px",textAlign:"left",color:D.muted,fontWeight:600,borderBottom:`1px solid ${D.bdr}`,whiteSpace:"nowrap"}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sortedSubs.map(s=>{
+                const rd=rowData(s);
+                return (
+                  <tr key={s._id} onClick={()=>setModal(s)} style={{cursor:"pointer",borderBottom:`1px solid ${D.bdr}22`}}
+                    onMouseEnter={e=>e.currentTarget.style.background=D.hover}
+                    onMouseLeave={e=>e.currentTarget.style.background=""}>
+                    <td style={{padding:"8px 10px",fontWeight:600,color:D.text}}>{rd._farm} ▶</td>
+                    <td style={{padding:"8px 10px",color:D.text}}>{rd._village}</td>
+                    <td style={{padding:"8px 10px",color:D.muted}}>{rd._surveyor}</td>
+                    <td style={{padding:"8px 10px",color:D.muted,whiteSpace:"nowrap"}}>{rd._date}</td>
+                    <td style={{padding:"8px 10px"}}>
+                      <span style={{background:D.success+"22",color:D.success,borderRadius:20,padding:"2px 8px",fontSize:10,fontWeight:600}}>Submitted</span>
+                    </td>
+                    <td style={{padding:"8px 10px"}}>{s._hasFlag?"🚩":""}</td>
+                  </tr>
+                );
+              })}
+              {sortedSubs.length===0 && (
+                <tr><td colSpan={6} style={{textAlign:"center",padding:24,color:D.muted}}>No submissions match</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
+  /* ─────────────────────────────────────────────────────── */
+  /* ── TABLE TAB ── */
+  function TableTab() {
+    const allRows = useMemo(()=>{
+      let s=[...enriched];
+      if(tableFilter==="flagged") s=s.filter(x=>x._hasFlag);
+      if(tableFilter==="clean")   s=s.filter(x=>!x._hasFlag);
+      if(tableSort==="newest") s.sort((a,b)=>new Date(b._submission_time)-new Date(a._submission_time));
+      if(tableSort==="oldest") s.sort((a,b)=>new Date(a._submission_time)-new Date(b._submission_time));
+      if(tableSearch.trim()){
+        const q=tableSearch.toLowerCase();
+        s=s.filter(x=>{
+          const rd=rowData(x);
+          return rd._farm.toLowerCase().includes(q)||rd._village.toLowerCase().includes(q)||rd._surveyor.toLowerCase().includes(q);
+        });
+      }
+      return s.map((x,i)=>({ ...x, _idx:i+1 }));
+    },[tableFilter, tableSort, tableSearch, enriched]);
+
+    const visCols = tableCols.filter(c=>!c.hidden);
+
+    const toggleCol = (key) => {
+      setColVis(prev=>{
+        const cur = prev || {};
+        return { ...cur, [key]: cur[key]===false ? true : false };
+      });
+    };
+
+    const toggleRow = (id) => {
+      setSelRows(prev=>{
+        const next=new Set(prev);
+        next.has(id)?next.delete(id):next.add(id);
+        return next;
+      });
+    };
+
+    return (
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+          {["all","flagged","clean"].map(f=>(
+            <button key={f} onClick={()=>setTableFilter(f)}
+              style={{padding:"6px 14px",border:`1px solid ${tableFilter===f?D.accent:D.bdr}`,borderRadius:20,background:tableFilter===f?D.accent+"22":"transparent",color:tableFilter===f?D.accent:D.muted,fontSize:12,cursor:"pointer",fontWeight:600}}>
+              {f==="all"?"All":f==="flagged"?"🚩 Flagged":"✅ Clean"}
+              {" "}({f==="all"?enriched.length:f==="flagged"?enriched.filter(s=>s._hasFlag).length:enriched.filter(s=>!s._hasFlag).length})
+            </button>
+          ))}
+          <input value={tableSearch} onChange={e=>setTableSearch(e.target.value)} placeholder="Search…"
+            style={{flex:"1 1 140px",padding:"6px 12px",border:`1px solid ${D.bdr}`,borderRadius:10,background:D.card,color:D.text,fontSize:12,outline:"none"}} />
+          <select value={tableSort} onChange={e=>setTableSort(e.target.value)}
+            style={{padding:"6px 10px",border:`1px solid ${D.bdr}`,borderRadius:10,background:D.card,color:D.text,fontSize:12,outline:"none"}}>
+            <option value="newest">Newest First</option>
+            <option value="oldest">Oldest First</option>
+          </select>
+          <div style={{position:"relative"}}>
+            <button onClick={()=>setShowColMenu(!showColMenu)}
+              style={{padding:"6px 12px",border:`1px solid ${D.bdr}`,borderRadius:10,background:D.card,color:D.muted,fontSize:12,cursor:"pointer"}}>
+              ☰ Columns
+            </button>
+            {showColMenu && (
+              <div style={{position:"absolute",top:"110%",right:0,background:D.card,border:`1px solid ${D.bdr}`,borderRadius:12,padding:10,zIndex:100,minWidth:160,boxShadow:"0 4px 20px rgba(0,0,0,0.15)"}}>
+                {tableCols.map(c=>(
+                  <label key={c.key} style={{display:"flex",gap:8,alignItems:"center",padding:"4px 6px",cursor:"pointer",fontSize:12,color:D.text}}>
+                    <input type="checkbox" checked={colVis?colVis[c.key]!==false:true} onChange={()=>toggleCol(c.key)} />
+                    {c.label}
+                  </label>
                 ))}
               </div>
-              <div style={{marginTop:14,borderTop:`1px solid ${D.bdr}`,paddingTop:14}}>
-                <div style={{fontSize:11,color:D.muted,fontWeight:700,marginBottom:8}}>➕ Add New Rule</div>
-                <AddRule fields={allFieldNames} onAdd={(rule)=>{const u=[...flagRules,rule];setFlagRules(u);sw("kobo_rules",u);}} D={D}/>
-              </div>
-              <div style={{marginTop:14}}><button onClick={()=>{setFlagRules(DEFAULT_FLAG_RULES);sw("kobo_rules",DEFAULT_FLAG_RULES);}} className="btn" style={{borderColor:"#f59e0b",background:"#f59e0b22",color:"#f59e0b"}}>↺ Reset to Defaults</button></div>
-            </Card>
-          </div>}
+            )}
+          </div>
+        </div>
+        {selRows.size>0 && (
+          <div style={{fontSize:12,color:D.accent,fontWeight:600}}>✓ {selRows.size} form{selRows.size>1?"s":""} selected</div>
+        )}
+        <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:600}}>
+            <thead>
+              <tr style={{background:D.hover}}>
+                <th style={{padding:"8px 6px",width:32}}>
+                  <input type="checkbox" onChange={e=>{
+                    if(e.target.checked) setSelRows(new Set(allRows.map(r=>r._id)));
+                    else setSelRows(new Set());
+                  }} />
+                </th>
+                {visCols.map(c=>(
+                  <th key={c.key} style={{padding:"8px 10px",textAlign:"left",color:D.muted,fontWeight:600,borderBottom:`1px solid ${D.bdr}`,whiteSpace:"nowrap"}}>{c.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {allRows.map(s=>{
+                const rd=rowData(s);
+                const checked=selRows.has(s._id);
+                return (
+                  <tr key={s._id}
+                    style={{cursor:"pointer",background:checked?D.accent+"11":"",borderBottom:`1px solid ${D.bdr}22`}}
+                    onMouseEnter={e=>!checked&&(e.currentTarget.style.background=D.hover)}
+                    onMouseLeave={e=>!checked&&(e.currentTarget.style.background="")}>
+                    <td style={{padding:"8px 6px"}} onClick={e=>e.stopPropagation()}>
+                      <input type="checkbox" checked={checked} onChange={()=>toggleRow(s._id)} />
+                    </td>
+                    {visCols.map(c=>(
+                      <td key={c.key} onClick={()=>setModal(s)}
+                        style={{padding:"8px 10px",color:c.key==="_flag"?(s._hasFlag?D.danger:D.success):D.text,whiteSpace:"nowrap"}}>
+                        {rd[c.key]}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+              {allRows.length===0 && (
+                <tr><td colSpan={visCols.length+1} style={{textAlign:"center",padding:24,color:D.muted}}>No submissions found</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
+  /* ─────────────────────────────────────────────────────── */
+  /* ── SETTINGS TAB ── */
+  function SettingsTab() {
+    const [localRules, setLocalRules] = useState(rules);
+
+    const update = (id, field, val) => {
+      setLocalRules(prev=>prev.map(r=>r.id===id?{ ...r, [field]:val===''?null:(isNaN(val)?val:Number(val)) }:r));
+    };
+    const save = () => { setRules(localRules); alert("✅ Rules saved!"); };
+    const reset = () => { setLocalRules(DEFAULT_RULES); setRules(DEFAULT_RULES); };
+    const addRule = () => {
+      if(!newRule.label||!newRule.pat) return;
+      const r = { id:"r"+Date.now(), ...newRule, min:newRule.min===''?null:Number(newRule.min), max:newRule.max===''?null:Number(newRule.max), active:true };
+      setLocalRules(prev=>[...prev,r]);
+      setNewRule({label:"",pat:"",min:"",max:"",unit:""});
+    };
+
+    return (
+      <div style={{display:"flex",flexDirection:"column",gap:16,maxWidth:600}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontWeight:700,fontSize:15,color:D.text}}>⚙️ Flag Rules</div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={reset} style={{padding:"6px 14px",border:`1px solid ${D.bdr}`,borderRadius:10,background:"transparent",color:D.muted,fontSize:12,cursor:"pointer"}}>Reset Defaults</button>
+            <button onClick={save} style={{padding:"6px 16px",border:"none",borderRadius:10,background:D.accent,color:"#fff",fontSize:12,cursor:"pointer",fontWeight:600}}>Save Rules</button>
+          </div>
+        </div>
+        <div style={{fontSize:11,color:D.muted}}>Enable/disable rules and set min/max thresholds. "pat" is a pattern that matches field names in the KoboToolbox form.</div>
+        {localRules.map(r=>(
+          <div key={r.id} style={{background:D.card,border:`1px solid ${r.active?D.accent:D.bdr}`,borderRadius:12,padding:14,display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+            <label style={{display:"flex",gap:6,alignItems:"center",cursor:"pointer",minWidth:60}}>
+              <input type="checkbox" checked={r.active} onChange={e=>update(r.id,"active",e.target.checked)} />
+              <span style={{fontSize:12,fontWeight:600,color:r.active?D.text:D.muted}}>{r.label}</span>
+            </label>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",flex:1}}>
+              <input value={r.min??""} onChange={e=>update(r.id,"min",e.target.value)} placeholder="Min" type="number"
+                style={{width:70,padding:"4px 8px",border:`1px solid ${D.bdr}`,borderRadius:8,background:D.hover,color:D.text,fontSize:12,outline:"none"}} />
+              <input value={r.max??""} onChange={e=>update(r.id,"max",e.target.value)} placeholder="Max" type="number"
+                style={{width:70,padding:"4px 8px",border:`1px solid ${D.bdr}`,borderRadius:8,background:D.hover,color:D.text,fontSize:12,outline:"none"}} />
+              <span style={{fontSize:11,color:D.muted,alignSelf:"center"}}>{r.unit}</span>
+              <button onClick={()=>setLocalRules(prev=>prev.filter(x=>x.id!==r.id))}
+                style={{marginLeft:"auto",padding:"2px 8px",border:`1px solid ${D.danger}44`,borderRadius:8,background:"transparent",color:D.danger,cursor:"pointer",fontSize:11}}>
+                ✕ Remove
+              </button>
+            </div>
+          </div>
+        ))}
+        {/* add new rule */}
+        <div style={{background:D.card,border:`1px dashed ${D.bdr}`,borderRadius:12,padding:14}}>
+          <div style={{fontSize:12,fontWeight:600,color:D.muted,marginBottom:10}}>+ ADD NEW RULE</div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <input value={newRule.label} onChange={e=>setNewRule(p=>({...p,label:e.target.value}))} placeholder="Label (e.g. Keara)"
+              style={{flex:"1 1 100px",padding:"6px 10px",border:`1px solid ${D.bdr}`,borderRadius:8,background:D.hover,color:D.text,fontSize:12,outline:"none"}} />
+            <input value={newRule.pat} onChange={e=>setNewRule(p=>({...p,pat:e.target.value}))} placeholder="Field pattern (e.g. keara)"
+              style={{flex:"1 1 100px",padding:"6px 10px",border:`1px solid ${D.bdr}`,borderRadius:8,background:D.hover,color:D.text,fontSize:12,outline:"none"}} />
+            <input value={newRule.min} onChange={e=>setNewRule(p=>({...p,min:e.target.value}))} placeholder="Min" type="number"
+              style={{width:65,padding:"6px 8px",border:`1px solid ${D.bdr}`,borderRadius:8,background:D.hover,color:D.text,fontSize:12,outline:"none"}} />
+            <input value={newRule.max} onChange={e=>setNewRule(p=>({...p,max:e.target.value}))} placeholder="Max" type="number"
+              style={{width:65,padding:"6px 8px",border:`1px solid ${D.bdr}`,borderRadius:8,background:D.hover,color:D.text,fontSize:12,outline:"none"}} />
+            <input value={newRule.unit} onChange={e=>setNewRule(p=>({...p,unit:e.target.value}))} placeholder="Unit"
+              style={{width:60,padding:"6px 8px",border:`1px solid ${D.bdr}`,borderRadius:8,background:D.hover,color:D.text,fontSize:12,outline:"none"}} />
+            <button onClick={addRule}
+              style={{padding:"6px 14px",border:"none",borderRadius:8,background:D.accent,color:"#fff",fontSize:12,cursor:"pointer",fontWeight:600,opacity:(!newRule.label||!newRule.pat)?0.5:1}}>
+              + Add
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ─────────────────────────────────────────────────────── */
+  /* ── TABS ── */
+  const TABS = [
+    { id:"overview", label:"📊 Overview" },
+    { id:"map",      label:"🗺 Map" },
+    { id:"flags",    label:`🚩 Flags (${enriched.filter(s=>s._hasFlag).length})` },
+    { id:"pending",  label:"⏳ Pending" },
+    { id:"table",    label:"📋 Table" },
+    { id:"settings", label:"⚙️ Settings" },
+  ];
+
+  /* ─────────────────────────────────────────────────────── */
+  return (
+    <div style={{minHeight:"100vh",background:D.bg,fontFamily:"system-ui,-apple-system,sans-serif",color:D.text}}>
+      {/* header */}
+      <div style={{background:D.card,borderBottom:`1px solid ${D.bdr}`,padding:"12px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+        <div>
+          <div style={{fontWeight:800,fontSize:16,color:D.text}}>🌾 Endline Dashboard</div>
+          <div style={{fontSize:11,color:D.muted}}>KoboToolbox • {enriched.length} submissions loaded</div>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={fetchAll} disabled={loading}
+            style={{padding:"6px 14px",border:`1px solid ${D.bdr}`,borderRadius:10,background:D.card,color:loading?D.muted:D.accent,cursor:loading?"wait":"pointer",fontSize:12,fontWeight:600}}>
+            {loading?"⟳ Loading…":"↻ Refresh"}
+          </button>
+          <button onClick={()=>setDark(!dark)}
+            style={{padding:"6px 12px",border:`1px solid ${D.bdr}`,borderRadius:10,background:D.card,color:D.muted,cursor:"pointer",fontSize:14}}>
+            {dark?"☀️":"🌙"}
+          </button>
         </div>
       </div>
 
-      {/* MODAL — shared for all tabs */}
-      {openSub && (
-        <SubModal
-          sub={openSub}
-          onClose={() => setOpenSub(null)}
-          allowEdit={true}
-          {...modalCommon}
-        />
-      )}
-    </>
+      {/* tab bar */}
+      <div style={{background:D.card,borderBottom:`1px solid ${D.bdr}`,display:"flex",overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+        {TABS.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)}
+            style={{padding:"10px 16px",border:"none",borderBottom:`2px solid ${tab===t.id?D.accent:"transparent"}`,background:"transparent",color:tab===t.id?D.accent:D.muted,cursor:"pointer",fontSize:12,fontWeight:tab===t.id?700:400,whiteSpace:"nowrap"}}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* content */}
+      <div style={{padding:"20px 16px",maxWidth:1100,margin:"0 auto"}}>
+        {loading && <div style={{textAlign:"center",padding:40,color:D.muted,fontSize:14}}>⟳ Loading survey data…</div>}
+        {err && <div style={{textAlign:"center",padding:20,color:D.danger,fontSize:13}}>⚠️ Error: {err}</div>}
+        {!loading && !err && (
+          <>
+            {tab==="overview" && <OverviewTab />}
+            {tab==="map"      && <MapTab />}
+            {tab==="flags"    && <FlagsTab />}
+            {tab==="pending"  && <PendingTab />}
+            {tab==="table"    && <TableTab />}
+            {tab==="settings" && <SettingsTab />}
+          </>
+        )}
+      </div>
+
+      {/* modal */}
+      {modal && <FormModal sub={modal} onClose={()=>{ setModal(null); setEditMode(false); setEditData({}); }} />}
+    </div>
   );
 }
