@@ -1,42 +1,46 @@
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,PATCH,PUT,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+  // CORS + preflight
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
 
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  const apiToken = process.env.KOBO_API_TOKEN || "cfda7c6ec2ad5c686e180747c4c005995710445a";
+  const path = req.query.path || "";
+
+  if (!path) {
+    return res.status(400).json({ error: "Missing path query parameter" });
+  }
+
+  const url = `https://kf.kobotoolbox.org${path}`;
+  const headers = {
+    Authorization: `Token ${apiToken}`,
+    Accept: "application/json",
+    "Content-Type": "application/json",
+  };
 
   try {
-    const koboPath = req.query.path;
-    if (!koboPath) return res.status(400).json({ error: 'No path provided' });
-
-    const cleanPath = koboPath.startsWith('/') ? koboPath : '/' + koboPath;
-    const url = 'https://kf.kobotoolbox.org' + cleanPath;
-
-    const fetchOpts = {
-      method: req.method || 'GET',
-      headers: {
-        'Authorization': 'Token cfda7c6ec2ad5c686e180747c4c005995710445a',
-        'Accept': 'application/json',
-      }
+    let options = {
+      method: req.method,
+      headers,
     };
 
-    // For PATCH/PUT, forward the request body
-    if (req.method === 'PATCH' || req.method === 'PUT') {
-      fetchOpts.headers['Content-Type'] = 'application/json';
-      fetchOpts.body = JSON.stringify(req.body);
+    // Forward body for POST, PATCH, PUT
+    if (req.method === "POST" || req.method === "PATCH" || req.method === "PUT") {
+      if (req.body) {
+        options.body = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+      }
     }
 
-    const r = await fetch(url, fetchOpts);
+    const response = await fetch(url, options);
+    const data = await response.json();
 
-    if (!r.ok) {
-      const errText = await r.text();
-      return res.status(r.status).json({ error: `KoboToolbox returned ${r.status}`, detail: errText });
-    }
-
-    const text = await r.text();
-    res.setHeader('Content-Type', 'application/json');
-    res.status(200).send(text);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error("Proxy error:", error);
+    res.status(500).json({ error: error.message });
   }
 }
