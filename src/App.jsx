@@ -355,7 +355,11 @@ export default function App() {
 
   const pendingVillages = useMemo(() => [...new Set(allFarmIds.map(r => r.village))].filter(v => v && v.length > 2).sort(), [allFarmIds]);
   const pendingCount = allFarmIds.filter(r => !r.submitted).length;
-  const submittedCount = allFarmIds.filter(r => r.submitted).length;
+  // Done = total submissions reported by KoboToolbox. We use submissions.length
+  // directly so the count always matches the header ("272 submissions"). The
+  // alternative — counting unique submitted farm_ids — drops duplicates and any
+  // submissions whose farm_id field is empty, leading to a confusing mismatch.
+  const submittedCount = total;
 
   const pendingFiltered = useMemo(() => {
     let arr = allFarmIds.filter(r => {
@@ -475,7 +479,7 @@ export default function App() {
 
           {/* ══════════ PENDING (FIXED) ══════════ */}
           {tab === "pending" && <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div className="sr" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}><Stat label="Total Farm IDs" value={allFarmIds.length} color="#0ea5e9" icon="🗂" theme={theme} /><Stat label="Done" value={submittedCount} color="#10b981" icon="✅" theme={theme} /><Stat label="Pending" value={pendingCount} color="#ef4444" icon="⏳" theme={theme} /><Stat label="Progress" value={allFarmIds.length ? Math.round((submittedCount / allFarmIds.length) * 100) : 0} unit="%" color="#f59e0b" icon="📈" theme={theme} /></div>
+            <div className="sr" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}><Stat label="Total Farm IDs" value={allFarmIds.length} color="#0ea5e9" icon="🗂" theme={theme} /><Stat label="Done" value={submittedCount} color="#10b981" icon="✅" theme={theme} /><Stat label="Pending" value={pendingCount} color="#ef4444" icon="⏳" theme={theme} /><Stat label="Progress" value={allFarmIds.length ? Math.min(100, Math.round((submittedCount / allFarmIds.length) * 100)) : 0} unit="%" color="#f59e0b" icon="📈" theme={theme} /></div>
             <Card title="By Village" theme={theme}><div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{vilSummary.map((v, i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ width: 140, fontSize: 11, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.village}</span><div style={{ flex: 1, background: D.bdr, borderRadius: 4, height: 18, overflow: "hidden", position: "relative", minWidth: 40 }}><div style={{ width: `${v.pct}%`, height: "100%", borderRadius: 4, background: v.pct === 100 ? "#10b981" : v.pct > 60 ? "#f59e0b" : "#ef4444" }} /><span style={{ position: "absolute", left: 6, top: "50%", transform: "translateY(-50%)", fontSize: 9, fontWeight: 700, color: "#fff" }}>{v.pct}%</span></div><span style={{ width: 80, fontSize: 10, flexShrink: 0, textAlign: "right" }}><span style={{ color: "#10b981" }}>{v.submitted}</span>/{v.total}</span></div>)}</div></Card>
             <Card title="Farm IDs" theme={theme} noPad extra={<div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "0 14px", alignItems: "center" }}>
               <input value={pendingSearch} onChange={e => setPendingSearch(e.target.value)} placeholder="🔍 Search…" className="inp" style={{ flex: 1, minWidth: 140, padding: "5px 10px", fontSize: 11 }} />
