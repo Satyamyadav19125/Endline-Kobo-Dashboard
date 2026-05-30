@@ -105,6 +105,7 @@ export default function App() {
   const [expandedRow,setExpandedRow]=useState(null);
   const [mapSearch,setMapSearch]=useState("");
   const [showDupOnly,setShowDupOnly]=useState(false);
+  const [showNoIdOnly,setShowNoIdOnly]=useState(false);
   const [isMobile,setIsMobile]=useState(typeof window!=="undefined"&&window.innerWidth<640);
   const [flagSearch,setFlagSearch]=useState("");
   const [pendingSearch,setPendingSearch]=useState("");
@@ -262,6 +263,8 @@ export default function App() {
   // Duplicates
   const fIdCounts = {}; submissions.forEach(r => { const id = r["ANS/ANS_farm_id"] || r["location/select_farm_id"]; if (id) fIdCounts[id] = (fIdCounts[id] || 0) + 1; });
   const dupSet = new Set(Object.keys(fIdCounts).filter(k => fIdCounts[k] > 1)); const dupCount = dupSet.size;
+  // Submissions missing a farm_id altogether (neither location/select_farm_id nor ANS/ANS_farm_id set)
+  const noIdCount = submissions.filter(s => !(s["ANS/ANS_farm_id"] || s["location/select_farm_id"])).length;
 
   // Flags using customizable rules
   const flaggedSubs = useMemo(() => submissions.map(s => {
@@ -279,13 +282,38 @@ export default function App() {
 
   // TABLE filtered
   const filtered = useMemo(() => {
-    return flaggedSubs.filter(r => {
-      if (showDupOnly) { const id = r["ANS/ANS_farm_id"] || r["location/select_farm_id"]; if (!dupSet.has(id)) return false; }
+    // Step 1: apply all active filters
+    const matched = flaggedSubs.filter(r => {
+      const id = r["ANS/ANS_farm_id"] || r["location/select_farm_id"] || "";
+      if (showDupOnly && !dupSet.has(id)) return false;
+      if (showNoIdOnly && id) return false;
       if (tableFilter === "flagged" && !r._hasActiveFlag) return false;
       if (tableFilter === "clean" && r._hasActiveFlag) return false;
       return !search || Object.values(r).some(v => typeof v === "string" && v.toLowerCase().includes(search.toLowerCase()));
-    }).sort((a, b) => new Date(b._submission_time || 0) - new Date(a._submission_time || 0));
-  }, [flaggedSubs, showDupOnly, dupSet, tableFilter, search]);
+    });
+    // Step 2: sort newest-first
+    const sorted = matched.slice().sort((a, b) => new Date(b._submission_time || 0) - new Date(a._submission_time || 0));
+    // Step 3: cluster duplicates — when a row whose farm_id appears more than once
+    // is placed, immediately insert all other rows with the same farm_id right after
+    // it. This keeps the overall newest-first ordering but puts all copies of any
+    // duplicated farm_id side-by-side so they can be compared directly.
+    const out = [];
+    const placed = new Set();
+    for (const row of sorted) {
+      if (placed.has(row._id)) continue;
+      out.push(row);
+      placed.add(row._id);
+      const id = row["ANS/ANS_farm_id"] || row["location/select_farm_id"] || "";
+      if (id && dupSet.has(id)) {
+        for (const other of sorted) {
+          if (placed.has(other._id)) continue;
+          const otherId = other["ANS/ANS_farm_id"] || other["location/select_farm_id"] || "";
+          if (otherId === id) { out.push(other); placed.add(other._id); }
+        }
+      }
+    }
+    return out;
+  }, [flaggedSubs, showDupOnly, showNoIdOnly, dupSet, tableFilter, search]);
 
   const mapSelSub = submissions.find(s => s._id === selectedId);
 
@@ -432,7 +460,8 @@ export default function App() {
               <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Search…" className="inp" style={{ flex: 1, minWidth: 160 }} />
               {/* Flag/Clean filter — clicking active filter (non-"all") resets to "all" */}
               {["all", "flagged", "clean"].map(f => <button key={f} onClick={() => setTableFilter(prev => (prev === f && f !== "all") ? "all" : f)} className="btn" style={{ borderColor: tableFilter === f ? (f === "flagged" ? "#ef4444" : f === "clean" ? "#10b981" : "#0ea5e9") : D.bdr, background: tableFilter === f ? (f === "flagged" ? "#ef444422" : f === "clean" ? "#10b98122" : "#0ea5e922") : "transparent", color: tableFilter === f ? (f === "flagged" ? "#ef4444" : f === "clean" ? "#10b981" : "#0ea5e9") : D.muted }}>{f === "all" ? `All (${total})` : f === "flagged" ? `🚩 Flagged (${totalFlagged})` : `✅ Clean (${totalClean})`}</button>)}
-              {dupCount > 0 && <button onClick={() => setShowDupOnly(d => !d)} className="btn" style={{ borderColor: showDupOnly ? "#ef4444" : D.bdr, background: showDupOnly ? "#ef444422" : "transparent", color: showDupOnly ? "#ef4444" : D.muted }}>{showDupOnly ? "✓ Dup Only" : "Dup Only"}</button>}
+              {dupCount > 0 && <button onClick={() => { setShowDupOnly(d => !d); setShowNoIdOnly(false); }} className="btn" style={{ borderColor: showDupOnly ? "#ef4444" : D.bdr, background: showDupOnly ? "#ef444422" : "transparent", color: showDupOnly ? "#ef4444" : D.muted }}>{showDupOnly ? "✓ Dup Only" : "Dup Only"}</button>}
+              {noIdCount > 0 && <button onClick={() => { setShowNoIdOnly(d => !d); setShowDupOnly(false); }} className="btn" style={{ borderColor: showNoIdOnly ? "#f59e0b" : D.bdr, background: showNoIdOnly ? "#f59e0b22" : "transparent", color: showNoIdOnly ? "#f59e0b" : D.muted }}>{showNoIdOnly ? `✓ No ID (${noIdCount})` : `No ID (${noIdCount})`}</button>}
               {/* Column picker toggle */}
               <button onClick={() => setShowColPicker(v => !v)} className="btn" style={{ borderColor: showColPicker ? "#8b5cf6" : D.bdr, background: showColPicker ? "#8b5cf622" : "transparent", color: showColPicker ? "#8b5cf6" : D.muted }}>☰ Columns</button>
               <DlBtn rows={filtered} filename="survey" theme={theme} />
