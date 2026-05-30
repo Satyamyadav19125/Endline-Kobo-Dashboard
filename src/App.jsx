@@ -155,17 +155,28 @@ export default function App() {
   useEffect(()=>{fetchData();},[fetchData]);
 
   // ─── Save edit to KoboToolbox ───
+  // Uses Kobo's bulk-update endpoint, which is the documented way to PATCH
+  // submission field values via the API. The single-submission PATCH endpoint
+  // does NOT accept arbitrary field edits.
   const saveEdit = async () => {
     if (!expandedRow || !editData || Object.keys(editData).length === 0) return;
     setSaving(true); setSaveMsg("");
     try {
       const subId = expandedRow._id;
-      const r = await fetch(`/api/kobo?path=${encodeURIComponent(`/api/v2/assets/${FORM_UID}/data/${subId}/`)}`, {
+      const payload = {
+        submission_ids: [String(subId)],
+        data: editData,
+      };
+      const r = await fetch(`/api/kobo?path=${encodeURIComponent(`/api/v2/assets/${FORM_UID}/data/bulk/`)}`, {
         method: "PATCH",
         headers: { ...HEADERS, "Content-Type": "application/json" },
-        body: JSON.stringify(editData),
+        body: JSON.stringify({ payload: JSON.stringify(payload) }),
       });
-      if (!r.ok) throw new Error(`Save failed: ${r.status}`);
+      if (!r.ok) {
+        let detail = "";
+        try { const j = await r.json(); detail = j.detail || j.error || JSON.stringify(j).slice(0, 120); } catch {}
+        throw new Error(`Save failed: ${r.status}${detail ? " — " + detail : ""}`);
+      }
       setSaveMsg("✅ Saved to KoboToolbox!");
       // Update local data
       setSubmissions(prev => prev.map(s => s._id === subId ? { ...s, ...editData } : s));
@@ -302,21 +313,44 @@ export default function App() {
         };
       });
     }
-    return formChoices.map(c => {
+
+    // Use a Map keyed by farm_id so duplicates collapse to a single entry.
+    const map = new Map();
+
+    // Step 1: Add every form-choice farm_id whose village we can resolve
+    // (these populate the expected universe shown in the village dropdown).
+    formChoices.forEach(c => {
       const name = c.name || "";
       const prefix = name.split("_")[0];
       const vilName = prefixToVillage[prefix];
-      // Only include if village name is resolved (skip unresolvable codes)
-      if (!vilName || vilName.length <= 2) return null;
+      if (!vilName || vilName.length <= 2) return;
       const sub = submissions.find(r => (r["location/select_farm_id"] || r["ANS/ANS_farm_id"]) === name);
-      return {
+      map.set(name, {
         farm_id: name,
         village: vilName,
         submitted: submittedFarmIds.has(name),
         surveyor: sub?.["surveyor_info/surveyor_name"] || "",
         date: sub ? (sub["date_time/survey_date"] || sub._submission_time || "").slice(0, 10) : "",
-      };
-    }).filter(Boolean);
+      });
+    });
+
+    // Step 2: Add any submitted farm_ids NOT already in the map — i.e. submissions
+    // whose farm_id isn't in the form's choice list, or whose village couldn't be
+    // resolved. Without this, those submissions were getting silently dropped and
+    // the "Done" count came out lower than the actual submission count.
+    submissions.forEach(r => {
+      const id = r["ANS/ANS_farm_id"] || r["location/select_farm_id"] || "";
+      if (!id || map.has(id)) return;
+      map.set(id, {
+        farm_id: id,
+        village: vilLabel(r["ANS/ANS_village"]) || "Other",
+        submitted: true,
+        surveyor: r["surveyor_info/surveyor_name"] || "",
+        date: (r["date_time/survey_date"] || r._submission_time || "").slice(0, 10),
+      });
+    });
+
+    return Array.from(map.values());
   }, [formChoices, submissions, prefixToVillage, submittedFarmIds, vilLabel]);
 
   const pendingVillages = useMemo(() => [...new Set(allFarmIds.map(r => r.village))].filter(v => v && v.length > 2).sort(), [allFarmIds]);
@@ -392,8 +426,8 @@ export default function App() {
             {dupCount > 0 && <div style={{ background: theme === "light" ? "#fef3c7" : "#1c1a00", border: "1px solid #f59e0b66", borderRadius: 8, padding: "8px 14px", fontSize: 12, color: "#f59e0b" }}>⚠️ {dupCount} duplicate Farm IDs.</div>}
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
               <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Search…" className="inp" style={{ flex: 1, minWidth: 160 }} />
-              {/* Flag/Clean filter */}
-              {["all", "flagged", "clean"].map(f => <button key={f} onClick={() => setTableFilter(f)} className="btn" style={{ borderColor: tableFilter === f ? (f === "flagged" ? "#ef4444" : f === "clean" ? "#10b981" : "#0ea5e9") : D.bdr, background: tableFilter === f ? (f === "flagged" ? "#ef444422" : f === "clean" ? "#10b98122" : "#0ea5e922") : "transparent", color: tableFilter === f ? (f === "flagged" ? "#ef4444" : f === "clean" ? "#10b981" : "#0ea5e9") : D.muted }}>{f === "all" ? `All (${total})` : f === "flagged" ? `🚩 Flagged (${totalFlagged})` : `✅ Clean (${totalClean})`}</button>)}
+              {/* Flag/Clean filter — clicking active filter (non-"all") resets to "all" */}
+              {["all", "flagged", "clean"].map(f => <button key={f} onClick={() => setTableFilter(prev => (prev === f && f !== "all") ? "all" : f)} className="btn" style={{ borderColor: tableFilter === f ? (f === "flagged" ? "#ef4444" : f === "clean" ? "#10b981" : "#0ea5e9") : D.bdr, background: tableFilter === f ? (f === "flagged" ? "#ef444422" : f === "clean" ? "#10b98122" : "#0ea5e922") : "transparent", color: tableFilter === f ? (f === "flagged" ? "#ef4444" : f === "clean" ? "#10b981" : "#0ea5e9") : D.muted }}>{f === "all" ? `All (${total})` : f === "flagged" ? `🚩 Flagged (${totalFlagged})` : `✅ Clean (${totalClean})`}</button>)}
               {dupCount > 0 && <button onClick={() => setShowDupOnly(d => !d)} className="btn" style={{ borderColor: showDupOnly ? "#ef4444" : D.bdr, background: showDupOnly ? "#ef444422" : "transparent", color: showDupOnly ? "#ef4444" : D.muted }}>{showDupOnly ? "✓ Dup Only" : "Dup Only"}</button>}
               {/* Column picker toggle */}
               <button onClick={() => setShowColPicker(v => !v)} className="btn" style={{ borderColor: showColPicker ? "#8b5cf6" : D.bdr, background: showColPicker ? "#8b5cf622" : "transparent", color: showColPicker ? "#8b5cf6" : D.muted }}>☰ Columns</button>
@@ -421,7 +455,7 @@ export default function App() {
             <div style={{ background: D.card, border: `1px solid ${D.bdr}`, borderRadius: 10, overflow: "hidden" }}>
               <div style={{ padding: "5px 12px", borderBottom: `1px solid ${D.bdr}`, fontSize: 10, color: D.muted, background: theme === "light" ? "#f8fafc" : "#071020" }}>Tap row → details · 🚩=flag ⚠=dup · newest first · Showing {filtered.length} of {total}</div>
               <div style={{ overflowX: "scroll", overflowY: "auto", maxHeight: "58vh", WebkitOverflowScrolling: "touch" }}>
-                <table style={{ borderCollapse: "collapse", fontSize: 11, tableLayout: "auto", whiteSpace: "nowrap" }}><thead style={{ position: "sticky", top: 0, zIndex: 10 }}><tr style={{ borderBottom: `1px solid ${D.bdr}`, background: theme === "light" ? "#f8fafc" : "#071020" }}><th style={{ padding: "7px 8px", width: 28, position: "sticky", left: 0, background: theme === "light" ? "#f8fafc" : "#071020", zIndex: 11 }}><input type="checkbox" onChange={e => setSelectedRows(e.target.checked ? filtered.map(r => r._id) : [])} checked={selectedRows.length === filtered.length && filtered.length > 0} /></th><th style={{ padding: "7px 4px", width: 24, position: "sticky", left: 28, background: theme === "light" ? "#f8fafc" : "#071020", zIndex: 11, fontSize: 9 }}>⚠🚩</th>{displayCols.map(c => <th key={c} style={{ padding: "7px 10px", textAlign: "left", color: D.muted, fontWeight: 600, fontSize: 10 }}>{prettyKey(c).toUpperCase()}</th>)}</tr></thead>
+                <table style={{ borderCollapse: "collapse", fontSize: 11, tableLayout: "auto", whiteSpace: "nowrap", width: "100%", minWidth: "100%" }}><thead style={{ position: "sticky", top: 0, zIndex: 10 }}><tr style={{ borderBottom: `1px solid ${D.bdr}`, background: theme === "light" ? "#f8fafc" : "#071020" }}><th style={{ padding: "7px 8px", width: 28, position: "sticky", left: 0, background: theme === "light" ? "#f8fafc" : "#071020", zIndex: 11 }}><input type="checkbox" onChange={e => setSelectedRows(e.target.checked ? filtered.map(r => r._id) : [])} checked={selectedRows.length === filtered.length && filtered.length > 0} /></th><th style={{ padding: "7px 4px", width: 24, position: "sticky", left: 28, background: theme === "light" ? "#f8fafc" : "#071020", zIndex: 11, fontSize: 9 }}>⚠🚩</th>{displayCols.map(c => <th key={c} style={{ padding: "7px 10px", textAlign: "left", color: D.muted, fontWeight: 600, fontSize: 10 }}>{prettyKey(c).toUpperCase()}</th>)}</tr></thead>
                   <tbody>{filtered.slice(0, 300).map((r, i) => { const fid = r["ANS/ANS_farm_id"] || r["location/select_farm_id"]; const isDup = fid && dupSet.has(fid); const hasF = r._hasActiveFlag; const bg = hasF ? (theme === "light" ? "#fef2f2" : "#2a0000") : isDup ? (theme === "light" ? "#fef9c3" : "#2d2200") : i % 2 ? D.row2 : D.row1; return <tr key={r._id} className="trow" onClick={() => { setExpandedRow(r); setEditMode(false); setEditData({}); setSaveMsg(""); }} style={{ borderBottom: `1px solid ${D.bdr}`, background: bg }}><td style={{ padding: "5px 8px", position: "sticky", left: 0, background: bg, zIndex: 1 }} onClick={e => { e.stopPropagation(); setSelectedRows(s => s.includes(r._id) ? s.filter(x => x !== r._id) : [...s, r._id]); }}><input type="checkbox" checked={selectedRows.includes(r._id)} onChange={() => {}} onClick={e => e.stopPropagation()} /></td><td style={{ padding: "5px 4px", position: "sticky", left: 28, background: bg, zIndex: 1, fontSize: 12 }}>{hasF ? "🚩" : isDup ? "⚠️" : ""}</td>{displayCols.map(c => { const raw = String(r[c] ?? ""); return <td key={c} style={{ padding: "5px 10px", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>{choiceLabelMap[raw] || raw}</td>; })}</tr>; })}</tbody></table>
               </div>
             </div>
