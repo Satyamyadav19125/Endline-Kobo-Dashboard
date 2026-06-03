@@ -400,10 +400,40 @@ export default function App() {
 
     // Step 1: Add every form-choice farm_id whose village we can resolve
     // (these populate the expected universe shown in the village dropdown).
+    //
+    // Resolution order:
+    //   1. c.village  — the cascade-filter column on each farm_id choice (set
+    //      in the Kobo form's "choices" sheet). This is the source of truth
+    //      and is reliable even when prefixes collide.
+    //   2. Scan every string property on the choice for a value that resolves
+    //      via choiceLabelMap — handles cases where the cascade column is
+    //      named differently (filter_value, parent, etc.).
+    //   3. Prefix-of-name fallback — kept only for safety; many villages share
+    //      a prefix (e.g. "KA" is used by Kalyan, Kakrala, Kasiana, Wazidpur),
+    //      so this is a last resort.
     formChoices.forEach(c => {
       const name = c.name || "";
-      const prefix = name.split("_")[0];
-      const vilName = prefixToVillage[prefix];
+      let vilName = null;
+      // (1) direct cascade column
+      if (c.village) {
+        const code = c.village;
+        vilName = choiceLabelMap[code] || choiceLabelMap[String(code).toLowerCase()] || null;
+      }
+      // (2) scan every string property for a resolvable village reference
+      if (!vilName || vilName.length <= 2) {
+        for (const [k, v] of Object.entries(c)) {
+          if (k === "name" || k === "label" || k === "list_name" || k === "village") continue;
+          if (typeof v === "string" && v.length > 1) {
+            const resolved = choiceLabelMap[v] || choiceLabelMap[v.toLowerCase()];
+            if (resolved && resolved.length > 2) { vilName = resolved; break; }
+          }
+        }
+      }
+      // (3) prefix fallback
+      if (!vilName || vilName.length <= 2) {
+        const prefix = name.split("_")[0];
+        vilName = prefixToVillage[prefix];
+      }
       if (!vilName || vilName.length <= 2) return;
       const sub = submissions.find(r => (r["location/select_farm_id"] || r["ANS/ANS_farm_id"]) === name);
       map.set(name, {
