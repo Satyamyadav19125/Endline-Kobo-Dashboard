@@ -189,6 +189,32 @@ export default function App() {
     } finally { setSaving(false); }
   };
 
+  // ─── Village list from form definition (source of truth) ───
+  // Reads the village-select field out of the survey definition and pulls every
+  // choice from its list. This guarantees we know about every village the form
+  // contains — including ones that have no submissions yet and ones whose PLT_
+  // plot codes can't be resolved by prefix matching.
+  const allVillageOptions = useMemo(() => {
+    if (!formFields.length || !allFormChoices.length) return [];
+    // Find the village select field. Match by name/$autoname containing "village".
+    const vf = formFields.find(f => {
+      const n = (f.name || "").toLowerCase();
+      const an = (f.$autoname || "").toLowerCase();
+      return (n.includes("village") || an.includes("village")) &&
+             (f.type === "select_one" || f.type === "select_multiple");
+    });
+    if (!vf) return [];
+    const listName = vf.select_from_list_name;
+    if (!listName) return [];
+    return allFormChoices
+      .filter(c => c.list_name === listName)
+      .map(c => ({
+        name: c.name || "",
+        label: Array.isArray(c.label) ? (c.label[0] || c.name) : (c.label || c.name),
+      }))
+      .filter(v => v.name && v.label);
+  }, [formFields, allFormChoices]);
+
   // ─── Village name resolution ───
   const prefixToVillage = useMemo(() => {
     const map = {};
@@ -202,27 +228,54 @@ export default function App() {
         if (resolved.length > 2) map[prefix] = resolved;
       }
     });
-    // Step 2: From all form choices (village list)
+    // Step 2: From all form choices (village list) — loosened so longer
+    // village-code names (e.g. "bhamarsi_buland") are also included.
     allFormChoices.forEach(c => {
       const name = c.name || "";
       const label = Array.isArray(c.label) ? c.label[0] : c.label;
-      if (label && name && !name.match(/PLT_\d+/) && name.length <= 4) {
-        // This might be a village code
-        if (!map[name] && label.length > 2) map[name] = label;
-        if (!map[name.toUpperCase()] && label.length > 2) map[name.toUpperCase()] = label;
+      if (label && name && !name.match(/PLT_\d+/i) && label.length > 2) {
+        if (!map[name]) map[name] = label;
+        if (!map[name.toUpperCase()]) map[name.toUpperCase()] = label;
+        if (!map[name.toLowerCase()]) map[name.toLowerCase()] = label;
       }
     });
-    // Step 3: From form choices filter_value
+    // Step 3: From PLT_ choices — examine ALL string properties of the choice,
+    // not just filter_value. KoboToolbox cascading-select choices store the
+    // parent reference under a column named after the cascade (e.g. "village"),
+    // which the API may serialize under varying keys. Scanning every string
+    // property and resolving via choiceLabelMap catches all variants.
     formChoices.forEach(c => {
       const prefix = (c.name || "").split("_")[0];
-      const fv = c.filter_value;
-      if (prefix && fv && !map[prefix]) {
-        const resolved = choiceLabelMap[fv] || choiceLabelMap[fv.toLowerCase()] || choiceLabelMap[prefix] || choiceLabelMap[prefix.toLowerCase()] || null;
-        if (resolved && resolved.length > 2) map[prefix] = resolved;
+      if (!prefix || map[prefix]) return;
+      const candidates = [];
+      for (const [k, v] of Object.entries(c)) {
+        if (k === "name" || k === "label" || k === "list_name") continue;
+        if (typeof v === "string" && v.length > 1) candidates.push(v);
+      }
+      for (const cand of candidates) {
+        const resolved =
+          choiceLabelMap[cand] ||
+          choiceLabelMap[String(cand).toLowerCase()] ||
+          map[cand] ||
+          map[String(cand).toLowerCase()] ||
+          null;
+        if (resolved && typeof resolved === "string" && resolved.length > 2) {
+          map[prefix] = resolved;
+          break;
+        }
+      }
+    });
+    // Step 4: Ensure every village from the form's village dropdown is mapped,
+    // even if there were no submissions and no PLT_ references for it yet.
+    allVillageOptions.forEach(v => {
+      if (v.label && v.label.length > 2) {
+        if (!map[v.name]) map[v.name] = v.label;
+        if (!map[v.name.toUpperCase()]) map[v.name.toUpperCase()] = v.label;
+        if (!map[v.name.toLowerCase()]) map[v.name.toLowerCase()] = v.label;
       }
     });
     return map;
-  }, [submissions, formChoices, allFormChoices, choiceLabelMap]);
+  }, [submissions, formChoices, allFormChoices, choiceLabelMap, allVillageOptions]);
 
   const vilLabel = useCallback((v) => {
     if (!v || v === "-") return "-";
@@ -381,7 +434,15 @@ export default function App() {
     return Array.from(map.values());
   }, [formChoices, submissions, prefixToVillage, submittedFarmIds, vilLabel]);
 
-  const pendingVillages = useMemo(() => [...new Set(allFarmIds.map(r => r.village))].filter(v => v && v.length > 2).sort(), [allFarmIds]);
+  // Village dropdown: union of villages we have farm-IDs for AND every village
+  // defined in the form. This is what makes Bhamarsi Buland / Kalyan appear even
+  // when they have no PLT_ choices or no submissions yet.
+  const pendingVillages = useMemo(() => {
+    const set = new Set();
+    allFarmIds.forEach(r => { if (r.village && r.village.length > 2) set.add(r.village); });
+    allVillageOptions.forEach(v => { if (v.label && v.label.length > 2) set.add(v.label); });
+    return [...set].sort();
+  }, [allFarmIds, allVillageOptions]);
   const pendingCount = allFarmIds.filter(r => !r.submitted).length;
   // Done = total submissions reported by KoboToolbox. We use submissions.length
   // directly so the count always matches the header ("272 submissions"). The
