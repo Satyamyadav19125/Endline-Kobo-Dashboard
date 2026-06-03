@@ -398,21 +398,40 @@ export default function App() {
     // Use a Map keyed by farm_id so duplicates collapse to a single entry.
     const map = new Map();
 
-    // Step 1: Add every form-choice farm_id whose village we can resolve
-    // (these populate the expected universe shown in the village dropdown).
+    // Step 1: Add every submission FIRST. The submission's own ANS_village
+    // field is the source of truth for which village a submitted farm belongs
+    // to. Doing this before iterating form choices guarantees submitted forms
+    // are villaged by their actual data, not by a possibly-colliding prefix or
+    // a missing cascade column on the choice.
+    submissions.forEach(r => {
+      const id = r["ANS/ANS_farm_id"] || r["location/select_farm_id"] || "";
+      if (!id) return;
+      map.set(id, {
+        farm_id: id,
+        village: vilLabel(r["ANS/ANS_village"]) || "Other",
+        submitted: true,
+        surveyor: r["surveyor_info/surveyor_name"] || "",
+        date: (r["date_time/survey_date"] || r._submission_time || "").slice(0, 10),
+      });
+    });
+
+    // Step 2: Fill in the PENDING (not-yet-submitted) farms from the form's
+    // choice list. We only need to resolve a village for these — submitted
+    // ones are already done in Step 1 and skipped here.
     //
-    // Resolution order:
-    //   1. c.village  — the cascade-filter column on each farm_id choice (set
-    //      in the Kobo form's "choices" sheet). This is the source of truth
-    //      and is reliable even when prefixes collide.
+    // Resolution order for pending farms:
+    //   1. c.village  — the cascade-filter column on each farm_id choice
+    //      (the source of truth from the form definition).
     //   2. Scan every string property on the choice for a value that resolves
     //      via choiceLabelMap — handles cases where the cascade column is
-    //      named differently (filter_value, parent, etc.).
-    //   3. Prefix-of-name fallback — kept only for safety; many villages share
-    //      a prefix (e.g. "KA" is used by Kalyan, Kakrala, Kasiana, Wazidpur),
-    //      so this is a last resort.
+    //      named differently in the API response.
+    //   3. Prefix-of-name fallback — many villages share a prefix (e.g. "LA"
+    //      is used by Lang, Lachkani, Lalina; "KA" by Kalyan, Kakrala,
+    //      Kasiana, Wazidpur), so this is a last resort and only correct
+    //      when the prefix happens to be unique.
     formChoices.forEach(c => {
       const name = c.name || "";
+      if (!name || map.has(name)) return;
       let vilName = null;
       // (1) direct cascade column
       if (c.village) {
@@ -435,34 +454,17 @@ export default function App() {
         vilName = prefixToVillage[prefix];
       }
       if (!vilName || vilName.length <= 2) return;
-      const sub = submissions.find(r => (r["location/select_farm_id"] || r["ANS/ANS_farm_id"]) === name);
       map.set(name, {
         farm_id: name,
         village: vilName,
-        submitted: submittedFarmIds.has(name),
-        surveyor: sub?.["surveyor_info/surveyor_name"] || "",
-        date: sub ? (sub["date_time/survey_date"] || sub._submission_time || "").slice(0, 10) : "",
-      });
-    });
-
-    // Step 2: Add any submitted farm_ids NOT already in the map — i.e. submissions
-    // whose farm_id isn't in the form's choice list, or whose village couldn't be
-    // resolved. Without this, those submissions were getting silently dropped and
-    // the "Done" count came out lower than the actual submission count.
-    submissions.forEach(r => {
-      const id = r["ANS/ANS_farm_id"] || r["location/select_farm_id"] || "";
-      if (!id || map.has(id)) return;
-      map.set(id, {
-        farm_id: id,
-        village: vilLabel(r["ANS/ANS_village"]) || "Other",
-        submitted: true,
-        surveyor: r["surveyor_info/surveyor_name"] || "",
-        date: (r["date_time/survey_date"] || r._submission_time || "").slice(0, 10),
+        submitted: false,
+        surveyor: "",
+        date: "",
       });
     });
 
     return Array.from(map.values());
-  }, [formChoices, submissions, prefixToVillage, submittedFarmIds, vilLabel]);
+  }, [formChoices, submissions, prefixToVillage, vilLabel, choiceLabelMap]);
 
   // Village dropdown: union of villages we have farm-IDs for AND every village
   // defined in the form. This is what makes Bhamarsi Buland / Kalyan appear even
